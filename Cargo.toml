@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["crates/ls-core", "contract", "spike"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+# Contract-oriented release profile: the wasm is built with
+# `cargo build --target wasm32-unknown-unknown --release -p ls-contract`.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+overflow-checks = true
+debug = false
+strip = true

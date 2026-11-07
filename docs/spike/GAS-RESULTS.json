@@ -1,0 +1,1656 @@
+{
+  "bot_max_depth": 15,
+  "fit_all_runs": {
+    "gas_fixed": 2088037382726.169,
+    "gas_per_map": 275221314639.81506,
+    "gas_per_move": 2528000453.034449,
+    "max_moves_at_1000_tgas_rusher_pace": 111500.64714621587,
+    "max_moves_at_1000_tgas_survivor_pace": 255605.68803873353,
+    "model": "gas = fixed + per_move * moves_applied + per_map * maps_generated"
+  },
+  "generated_by": "spike/tests/sandbox.rs bench_settle_dive_gas",
+  "graves_marginal": {
+    "graves_in_state_for_300_moves_at_100_tgas": 561.9919762875849,
+    "tgas_per_grave_in_state": 0.1709652049352
+  },
+  "graves_scaling": [
+    {
+      "graves_in_state": [
+        5,
+        5,
+        5
+      ],
+      "graves_looted": [
+        0,
+        0,
+        0
+      ],
+      "max_tgas": 5.096173695939,
+      "median_tgas": 4.767307418648,
+      "min_tgas": 4.7330758685,
+      "n": 300
+    },
+    {
+      "graves_in_state": [
+        10,
+        10,
+        10
+      ],
+      "graves_looted": [
+        0,
+        0,
+        0
+      ],
+      "max_tgas": 5.95825283392,
+      "median_tgas": 5.626714688613,
+      "min_tgas": 5.592483138465,
+      "n": 300
+    },
+    {
+      "graves_in_state": [
+        20,
+        20,
+        20
+      ],
+      "graves_looted": [
+        0,
+        1,
+        0
+      ],
+      "max_tgas": 8.346065793239,
+      "median_tgas": 7.338230700759,
+      "min_tgas": 7.311832217103,
+      "n": 300
+    }
+  ],
+  "prepaid_gas": 1000000000000000,
+  "runs": [
+    {
+      "account": "survivor50s1.test.near",
+      "args_bytes": 91,
+      "depths_visited": 1,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 1,
+      "function_call_receipt_gas_burnt": 2452753228479,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 5,
+      "moves_applied": 50,
+      "moves_in_log": 50,
+      "n": 50,
+      "picked": [
+        [
+          3,
+          2
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 2452753228479,
+          "tokens_burnt_yocto": "245275322847900000000"
+        }
+      ],
+      "seed": 1,
+      "start_depth": 1,
+      "style": "survivor",
+      "tokens_burnt_near": 0.0002765676467409,
+      "tokens_burnt_yocto": "276567646740900000000",
+      "total_gas_burnt": 2765676467409,
+      "tx_conversion_gas_burnt": 312923238930
+    },
+    {
+      "account": "survivor50s2.test.near",
+      "args_bytes": 91,
+      "depths_visited": 1,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 1,
+      "function_call_receipt_gas_burnt": 2505425768864,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 6,
+      "moves_applied": 50,
+      "moves_in_log": 50,
+      "n": 50,
+      "picked": [
+        [
+          2,
+          1
+        ],
+        [
+          1,
+          16
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 2505425768864,
+          "tokens_burnt_yocto": "250542576886400000000"
+        }
+      ],
+      "seed": 2,
+      "start_depth": 1,
+      "style": "survivor",
+      "tokens_burnt_near": 0.00028183490077940003,
+      "tokens_burnt_yocto": "281834900779400000000",
+      "total_gas_burnt": 2818349007794,
+      "tx_conversion_gas_burnt": 312923238930
+    },
+    {
+      "account": "survivor50s3.test.near",
+      "args_bytes": 91,
+      "depths_visited": 1,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 1,
+      "function_call_receipt_gas_burnt": 2577819248317,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 7,
+      "moves_applied": 50,
+      "moves_in_log": 50,
+      "n": 50,
+      "picked": [
+        [
+          3,
+          1
+        ],
+        [
+          1,
+          14
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 2577819248317,
+          "tokens_burnt_yocto": "257781924831700000000"
+        }
+      ],
+      "seed": 3,
+      "start_depth": 1,
+      "style": "survivor",
+      "tokens_burnt_near": 0.0002890742487247,
+      "tokens_burnt_yocto": "289074248724700000000",
+      "total_gas_burnt": 2890742487247,
+      "tx_conversion_gas_burnt": 312923238930
+    },
+    {
+      "account": "survivor300s1.test.near",
+      "args_bytes": 423,
+      "depths_visited": 3,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 3,
+      "function_call_receipt_gas_burnt": 3590172369745,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 28,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          3,
+          4
+        ],
+        [
+          1,
+          65
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 3590172369745,
+          "tokens_burnt_yocto": "359017236974500000000"
+        }
+      ],
+      "seed": 1,
+      "start_depth": 1,
+      "style": "survivor",
+      "tokens_burnt_near": 0.0003918926602055,
+      "tokens_burnt_yocto": "391892660205500000000",
+      "total_gas_burnt": 3918926602055,
+      "tx_conversion_gas_burnt": 328754232310
+    },
+    {
+      "account": "survivor300s2.test.near",
+      "args_bytes": 423,
+      "depths_visited": 4,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 4,
+      "function_call_receipt_gas_burnt": 3903895371123,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 34,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          2,
+          4
+        ],
+        [
+          1,
+          104
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          4,
+          2
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 3903895371123,
+          "tokens_burnt_yocto": "390389537112300000000"
+        }
+      ],
+      "seed": 2,
+      "start_depth": 1,
+      "style": "survivor",
+      "tokens_burnt_near": 0.00042326496034329996,
+      "tokens_burnt_yocto": "423264960343300000000",
+      "total_gas_burnt": 4232649603433,
+      "tx_conversion_gas_burnt": 328754232310
+    },
+    {
+      "account": "survivor300s3.test.near",
+      "args_bytes": 423,
+      "depths_visited": 3,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 3,
+      "function_call_receipt_gas_burnt": 3562585003669,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 24,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          3,
+          3
+        ],
+        [
+          1,
+          58
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 3562585003669,
+          "tokens_burnt_yocto": "356258500366900000000"
+        }
+      ],
+      "seed": 3,
+      "start_depth": 1,
+      "style": "survivor",
+      "tokens_burnt_near": 0.0003891339235979,
+      "tokens_burnt_yocto": "389133923597900000000",
+      "total_gas_burnt": 3891339235979,
+      "tx_conversion_gas_burnt": 328754232310
+    },
+    {
+      "account": "survivor1000s1.test.near",
+      "args_bytes": 1359,
+      "depths_visited": 10,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 10,
+      "function_call_receipt_gas_burnt": 6258915601163,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 94,
+      "moves_applied": 1000,
+      "moves_in_log": 1000,
+      "n": 1000,
+      "picked": [
+        [
+          3,
+          13
+        ],
+        [
+          1,
+          257
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          4,
+          3
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 6258915601163,
+          "tokens_burnt_yocto": "625891560116300000000"
+        }
+      ],
+      "seed": 1,
+      "start_depth": 1,
+      "style": "survivor",
+      "tokens_burnt_near": 0.0006632301790713,
+      "tokens_burnt_yocto": "663230179071300000000",
+      "total_gas_burnt": 6632301790713,
+      "tx_conversion_gas_burnt": 373386189550
+    },
+    {
+      "account": "survivor1000s2.test.near",
+      "args_bytes": 1359,
+      "depths_visited": 10,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 10,
+      "function_call_receipt_gas_burnt": 5983204974788,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 101,
+      "moves_applied": 1000,
+      "moves_in_log": 1000,
+      "n": 1000,
+      "picked": [
+        [
+          2,
+          9
+        ],
+        [
+          1,
+          336
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          4,
+          5
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 5983204974788,
+          "tokens_burnt_yocto": "598320497478800000000"
+        }
+      ],
+      "seed": 2,
+      "start_depth": 1,
+      "style": "survivor",
+      "tokens_burnt_near": 0.0006356591164338,
+      "tokens_burnt_yocto": "635659116433800000000",
+      "total_gas_burnt": 6356591164338,
+      "tx_conversion_gas_burnt": 373386189550
+    },
+    {
+      "account": "survivor1000s3.test.near",
+      "args_bytes": 1359,
+      "depths_visited": 9,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 9,
+      "function_call_receipt_gas_burnt": 6330000851858,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 90,
+      "moves_applied": 1000,
+      "moves_in_log": 1000,
+      "n": 1000,
+      "picked": [
+        [
+          3,
+          11
+        ],
+        [
+          1,
+          225
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          4,
+          3
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 6330000851858,
+          "tokens_burnt_yocto": "633000085185800000000"
+        }
+      ],
+      "seed": 3,
+      "start_depth": 1,
+      "style": "survivor",
+      "tokens_burnt_near": 0.0006703387041408,
+      "tokens_burnt_yocto": "670338704140800000000",
+      "total_gas_burnt": 6703387041408,
+      "tx_conversion_gas_burnt": 373386189550
+    },
+    {
+      "account": "survivor3000s1.test.near",
+      "args_bytes": 4023,
+      "depths_visited": 15,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 15,
+      "function_call_receipt_gas_burnt": 13507262383292,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 170,
+      "moves_applied": 3000,
+      "moves_in_log": 3000,
+      "n": 3000,
+      "picked": [
+        [
+          3,
+          22
+        ],
+        [
+          1,
+          513
+        ],
+        [
+          2,
+          8
+        ],
+        [
+          4,
+          7
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 13507262383292,
+          "tokens_burnt_yocto": "1350726238329200000000"
+        }
+      ],
+      "seed": 1,
+      "start_depth": 1,
+      "style": "survivor",
+      "tokens_burnt_near": 0.0014007677989602001,
+      "tokens_burnt_yocto": "1400767798960200000000",
+      "total_gas_burnt": 14007677989602,
+      "tx_conversion_gas_burnt": 500415606310
+    },
+    {
+      "account": "survivor3000s2.test.near",
+      "args_bytes": 4023,
+      "depths_visited": 15,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 15,
+      "function_call_receipt_gas_burnt": 13459644613928,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 157,
+      "moves_applied": 3000,
+      "moves_in_log": 3000,
+      "n": 3000,
+      "picked": [
+        [
+          2,
+          16
+        ],
+        [
+          1,
+          529
+        ],
+        [
+          3,
+          12
+        ],
+        [
+          4,
+          9
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 13459644613928,
+          "tokens_burnt_yocto": "1345964461392800000000"
+        }
+      ],
+      "seed": 2,
+      "start_depth": 1,
+      "style": "survivor",
+      "tokens_burnt_near": 0.0013960060220237999,
+      "tokens_burnt_yocto": "1396006022023800000000",
+      "total_gas_burnt": 13960060220238,
+      "tx_conversion_gas_burnt": 500415606310
+    },
+    {
+      "account": "survivor3000s3.test.near",
+      "args_bytes": 4023,
+      "depths_visited": 15,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 15,
+      "function_call_receipt_gas_burnt": 13361417993096,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 154,
+      "moves_applied": 3000,
+      "moves_in_log": 3000,
+      "n": 3000,
+      "picked": [
+        [
+          3,
+          19
+        ],
+        [
+          1,
+          411
+        ],
+        [
+          2,
+          19
+        ],
+        [
+          4,
+          8
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 13361417993096,
+          "tokens_burnt_yocto": "1336141799309600000000"
+        }
+      ],
+      "seed": 3,
+      "start_depth": 1,
+      "style": "survivor",
+      "tokens_burnt_near": 0.0013861833599406,
+      "tokens_burnt_yocto": "1386183359940600000000",
+      "total_gas_burnt": 13861833599406,
+      "tx_conversion_gas_burnt": 500415606310
+    },
+    {
+      "account": "rusher50s1.test.near",
+      "args_bytes": 91,
+      "depths_visited": 2,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 2,
+      "function_call_receipt_gas_burnt": 2297600775147,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 10,
+      "moves_applied": 50,
+      "moves_in_log": 50,
+      "n": 50,
+      "picked": [
+        [
+          1,
+          1
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 2297600775147,
+          "tokens_burnt_yocto": "229760077514700000000"
+        }
+      ],
+      "seed": 1,
+      "start_depth": 1,
+      "style": "rusher",
+      "tokens_burnt_near": 0.0002610524014077,
+      "tokens_burnt_yocto": "261052401407700000000",
+      "total_gas_burnt": 2610524014077,
+      "tx_conversion_gas_burnt": 312923238930
+    },
+    {
+      "account": "rusher50s2.test.near",
+      "args_bytes": 91,
+      "depths_visited": 1,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 1,
+      "function_call_receipt_gas_burnt": 2238528172674,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 7,
+      "moves_applied": 50,
+      "moves_in_log": 50,
+      "n": 50,
+      "picked": [
+        [
+          1,
+          6
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 2238528172674,
+          "tokens_burnt_yocto": "223852817267400000000"
+        }
+      ],
+      "seed": 2,
+      "start_depth": 1,
+      "style": "rusher",
+      "tokens_burnt_near": 0.0002551451411604,
+      "tokens_burnt_yocto": "255145141160400000000",
+      "total_gas_burnt": 2551451411604,
+      "tx_conversion_gas_burnt": 312923238930
+    },
+    {
+      "account": "rusher50s3.test.near",
+      "args_bytes": 91,
+      "depths_visited": 2,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 2,
+      "function_call_receipt_gas_burnt": 2297065759686,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 8,
+      "moves_applied": 50,
+      "moves_in_log": 50,
+      "n": 50,
+      "picked": [
+        [
+          1,
+          7
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 2297065759686,
+          "tokens_burnt_yocto": "229706575968600000000"
+        }
+      ],
+      "seed": 3,
+      "start_depth": 1,
+      "style": "rusher",
+      "tokens_burnt_near": 0.0002609988998616,
+      "tokens_burnt_yocto": "260998899861600000000",
+      "total_gas_burnt": 2609988998616,
+      "tx_conversion_gas_burnt": 312923238930
+    },
+    {
+      "account": "rusher300s1.test.near",
+      "args_bytes": 423,
+      "depths_visited": 7,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 7,
+      "function_call_receipt_gas_burnt": 3617445412350,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 41,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          1,
+          49
+        ],
+        [
+          3,
+          1
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 3617445412350,
+          "tokens_burnt_yocto": "361744541235000000000"
+        }
+      ],
+      "seed": 1,
+      "start_depth": 1,
+      "style": "rusher",
+      "tokens_burnt_near": 0.000394619964466,
+      "tokens_burnt_yocto": "394619964466000000000",
+      "total_gas_burnt": 3946199644660,
+      "tx_conversion_gas_burnt": 328754232310
+    },
+    {
+      "account": "rusher300s2.test.near",
+      "args_bytes": 423,
+      "depths_visited": 7,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 7,
+      "function_call_receipt_gas_burnt": 3577399503075,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 40,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          1,
+          58
+        ],
+        [
+          4,
+          1
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 3577399503075,
+          "tokens_burnt_yocto": "357739950307500000000"
+        }
+      ],
+      "seed": 2,
+      "start_depth": 1,
+      "style": "rusher",
+      "tokens_burnt_near": 0.0003906153735385,
+      "tokens_burnt_yocto": "390615373538500000000",
+      "total_gas_burnt": 3906153735385,
+      "tx_conversion_gas_burnt": 328754232310
+    },
+    {
+      "account": "rusher300s3.test.near",
+      "args_bytes": 423,
+      "depths_visited": 8,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 8,
+      "function_call_receipt_gas_burnt": 4447842985562,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 33,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          1,
+          48
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 4447842985562,
+          "tokens_burnt_yocto": "444784298556200000000"
+        }
+      ],
+      "seed": 3,
+      "start_depth": 1,
+      "style": "rusher",
+      "tokens_burnt_near": 0.0004776597217872,
+      "tokens_burnt_yocto": "477659721787200000000",
+      "total_gas_burnt": 4776597217872,
+      "tx_conversion_gas_burnt": 328754232310
+    },
+    {
+      "account": "rusher1000s1.test.near",
+      "args_bytes": 1359,
+      "depths_visited": 12,
+      "deterministic_equal": true,
+      "died": true,
+      "final_depth": 12,
+      "function_call_receipt_gas_burnt": 5523219152823,
+      "graves_in": 0,
+      "inventory_in": [],
+      "kills": 65,
+      "moves_applied": 538,
+      "moves_in_log": 1000,
+      "n": 1000,
+      "picked": [
+        [
+          1,
+          83
+        ],
+        [
+          3,
+          2
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 5523219152823,
+          "tokens_burnt_yocto": "552321915282300000000"
+        }
+      ],
+      "seed": 1,
+      "start_depth": 1,
+      "style": "rusher",
+      "tokens_burnt_near": 0.0005896605342373,
+      "tokens_burnt_yocto": "589660534237300000000",
+      "total_gas_burnt": 5896605342373,
+      "tx_conversion_gas_burnt": 373386189550
+    },
+    {
+      "account": "rusher1000s2.test.near",
+      "args_bytes": 1359,
+      "depths_visited": 7,
+      "deterministic_equal": true,
+      "died": true,
+      "final_depth": 7,
+      "function_call_receipt_gas_burnt": 4639094287718,
+      "graves_in": 1,
+      "inventory_in": [],
+      "kills": 40,
+      "moves_applied": 305,
+      "moves_in_log": 1000,
+      "n": 1000,
+      "picked": [
+        [
+          1,
+          58
+        ],
+        [
+          4,
+          1
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 4639094287718,
+          "tokens_burnt_yocto": "463909428771800000000"
+        }
+      ],
+      "seed": 2,
+      "start_depth": 1,
+      "style": "rusher",
+      "tokens_burnt_near": 0.0005012480477268,
+      "tokens_burnt_yocto": "501248047726800000000",
+      "total_gas_burnt": 5012480477268,
+      "tx_conversion_gas_burnt": 373386189550
+    },
+    {
+      "account": "rusher1000s3.test.near",
+      "args_bytes": 1359,
+      "depths_visited": 14,
+      "deterministic_equal": true,
+      "died": true,
+      "final_depth": 14,
+      "function_call_receipt_gas_burnt": 7501104145545,
+      "graves_in": 2,
+      "inventory_in": [],
+      "kills": 70,
+      "moves_applied": 626,
+      "moves_in_log": 1000,
+      "n": 1000,
+      "picked": [
+        [
+          1,
+          90
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 7501104145545,
+          "tokens_burnt_yocto": "750110414554500000000"
+        }
+      ],
+      "seed": 3,
+      "start_depth": 1,
+      "style": "rusher",
+      "tokens_burnt_near": 0.0007874490335094999,
+      "tokens_burnt_yocto": "787449033509500000000",
+      "total_gas_burnt": 7874490335095,
+      "tx_conversion_gas_burnt": 373386189550
+    },
+    {
+      "account": "rusher3000s1.test.near",
+      "args_bytes": 4023,
+      "depths_visited": 12,
+      "deterministic_equal": true,
+      "died": true,
+      "final_depth": 12,
+      "function_call_receipt_gas_burnt": 7128497735281,
+      "graves_in": 3,
+      "inventory_in": [],
+      "kills": 65,
+      "moves_applied": 540,
+      "moves_in_log": 3000,
+      "n": 3000,
+      "picked": [
+        [
+          1,
+          83
+        ],
+        [
+          3,
+          2
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 7128497735281,
+          "tokens_burnt_yocto": "712849773528100000000"
+        }
+      ],
+      "seed": 1,
+      "start_depth": 1,
+      "style": "rusher",
+      "tokens_burnt_near": 0.0007628913341591,
+      "tokens_burnt_yocto": "762891334159100000000",
+      "total_gas_burnt": 7628913341591,
+      "tx_conversion_gas_burnt": 500415606310
+    },
+    {
+      "account": "rusher3000s2.test.near",
+      "args_bytes": 4023,
+      "depths_visited": 7,
+      "deterministic_equal": true,
+      "died": true,
+      "final_depth": 7,
+      "function_call_receipt_gas_burnt": 4975649660239,
+      "graves_in": 2,
+      "inventory_in": [],
+      "kills": 40,
+      "moves_applied": 305,
+      "moves_in_log": 3000,
+      "n": 3000,
+      "picked": [
+        [
+          1,
+          58
+        ],
+        [
+          4,
+          1
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 4975649660239,
+          "tokens_burnt_yocto": "497564966023900000000"
+        }
+      ],
+      "seed": 2,
+      "start_depth": 1,
+      "style": "rusher",
+      "tokens_burnt_near": 0.0005476065266549,
+      "tokens_burnt_yocto": "547606526654900000000",
+      "total_gas_burnt": 5476065266549,
+      "tx_conversion_gas_burnt": 500415606310
+    },
+    {
+      "account": "rusher3000s3.test.near",
+      "args_bytes": 4023,
+      "depths_visited": 16,
+      "deterministic_equal": true,
+      "died": true,
+      "final_depth": 16,
+      "function_call_receipt_gas_burnt": 8789635629266,
+      "graves_in": 3,
+      "inventory_in": [],
+      "kills": 89,
+      "moves_applied": 760,
+      "moves_in_log": 3000,
+      "n": 3000,
+      "picked": [
+        [
+          1,
+          124
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 8789635629266,
+          "tokens_burnt_yocto": "878963562926600000000"
+        }
+      ],
+      "seed": 3,
+      "start_depth": 1,
+      "style": "rusher",
+      "tokens_burnt_near": 0.0009290051235576,
+      "tokens_burnt_yocto": "929005123557600000000",
+      "total_gas_burnt": 9290051235576,
+      "tx_conversion_gas_burnt": 500415606310
+    },
+    {
+      "account": "g5s1.test.near",
+      "args_bytes": 423,
+      "depths_visited": 3,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 3,
+      "function_call_receipt_gas_burnt": 4438553186338,
+      "graves_in": 5,
+      "inventory_in": [],
+      "kills": 28,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          3,
+          4
+        ],
+        [
+          1,
+          65
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 4438553186338,
+          "tokens_burnt_yocto": "443855318633800000000"
+        }
+      ],
+      "seed": 1,
+      "start_depth": 1,
+      "style": "survivor-with-graves",
+      "tokens_burnt_near": 0.0004767307418648,
+      "tokens_burnt_yocto": "476730741864800000000",
+      "total_gas_burnt": 4767307418648,
+      "tx_conversion_gas_burnt": 328754232310
+    },
+    {
+      "account": "g5s2.test.near",
+      "args_bytes": 423,
+      "depths_visited": 4,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 4,
+      "function_call_receipt_gas_burnt": 4767419463629,
+      "graves_in": 5,
+      "inventory_in": [],
+      "kills": 34,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          2,
+          4
+        ],
+        [
+          1,
+          104
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          4,
+          2
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 4767419463629,
+          "tokens_burnt_yocto": "476741946362900000000"
+        }
+      ],
+      "seed": 2,
+      "start_depth": 1,
+      "style": "survivor-with-graves",
+      "tokens_burnt_near": 0.0005096173695938999,
+      "tokens_burnt_yocto": "509617369593900000000",
+      "total_gas_burnt": 5096173695939,
+      "tx_conversion_gas_burnt": 328754232310
+    },
+    {
+      "account": "g5s3.test.near",
+      "args_bytes": 423,
+      "depths_visited": 3,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 3,
+      "function_call_receipt_gas_burnt": 4404321636190,
+      "graves_in": 5,
+      "inventory_in": [],
+      "kills": 24,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          3,
+          3
+        ],
+        [
+          1,
+          58
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 4404321636190,
+          "tokens_burnt_yocto": "440432163619000000000"
+        }
+      ],
+      "seed": 3,
+      "start_depth": 1,
+      "style": "survivor-with-graves",
+      "tokens_burnt_near": 0.00047330758685000003,
+      "tokens_burnt_yocto": "473307586850000000000",
+      "total_gas_burnt": 4733075868500,
+      "tx_conversion_gas_burnt": 328754232310
+    },
+    {
+      "account": "g10s1.test.near",
+      "args_bytes": 423,
+      "depths_visited": 3,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 3,
+      "function_call_receipt_gas_burnt": 5297960456303,
+      "graves_in": 10,
+      "inventory_in": [],
+      "kills": 28,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          3,
+          4
+        ],
+        [
+          1,
+          65
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 5297960456303,
+          "tokens_burnt_yocto": "529796045630300000000"
+        }
+      ],
+      "seed": 1,
+      "start_depth": 1,
+      "style": "survivor-with-graves",
+      "tokens_burnt_near": 0.0005626714688613,
+      "tokens_burnt_yocto": "562671468861300000000",
+      "total_gas_burnt": 5626714688613,
+      "tx_conversion_gas_burnt": 328754232310
+    },
+    {
+      "account": "g10s2.test.near",
+      "args_bytes": 423,
+      "depths_visited": 4,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 4,
+      "function_call_receipt_gas_burnt": 5629498601610,
+      "graves_in": 10,
+      "inventory_in": [],
+      "kills": 34,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          2,
+          4
+        ],
+        [
+          1,
+          104
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          4,
+          2
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 5629498601610,
+          "tokens_burnt_yocto": "562949860161000000000"
+        }
+      ],
+      "seed": 2,
+      "start_depth": 1,
+      "style": "survivor-with-graves",
+      "tokens_burnt_near": 0.000595825283392,
+      "tokens_burnt_yocto": "595825283392000000000",
+      "total_gas_burnt": 5958252833920,
+      "tx_conversion_gas_burnt": 328754232310
+    },
+    {
+      "account": "g10s3.test.near",
+      "args_bytes": 423,
+      "depths_visited": 3,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 3,
+      "function_call_receipt_gas_burnt": 5263728906155,
+      "graves_in": 10,
+      "inventory_in": [],
+      "kills": 24,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          3,
+          3
+        ],
+        [
+          1,
+          58
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 5263728906155,
+          "tokens_burnt_yocto": "526372890615500000000"
+        }
+      ],
+      "seed": 3,
+      "start_depth": 1,
+      "style": "survivor-with-graves",
+      "tokens_burnt_near": 0.0005592483138465,
+      "tokens_burnt_yocto": "559248313846500000000",
+      "total_gas_burnt": 5592483138465,
+      "tx_conversion_gas_burnt": 328754232310
+    },
+    {
+      "account": "g20s1.test.near",
+      "args_bytes": 423,
+      "depths_visited": 3,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 3,
+      "function_call_receipt_gas_burnt": 7009476468449,
+      "graves_in": 20,
+      "inventory_in": [],
+      "kills": 28,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          3,
+          4
+        ],
+        [
+          1,
+          65
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 7009476468449,
+          "tokens_burnt_yocto": "700947646844900000000"
+        }
+      ],
+      "seed": 1,
+      "start_depth": 1,
+      "style": "survivor-with-graves",
+      "tokens_burnt_near": 0.0007338230700759,
+      "tokens_burnt_yocto": "733823070075900000000",
+      "total_gas_burnt": 7338230700759,
+      "tx_conversion_gas_burnt": 328754232310
+    },
+    {
+      "account": "g20s2.test.near",
+      "args_bytes": 423,
+      "depths_visited": 4,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 4,
+      "function_call_receipt_gas_burnt": 8017311560929,
+      "graves_in": 20,
+      "inventory_in": [],
+      "kills": 34,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          2,
+          4
+        ],
+        [
+          1,
+          104
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          4,
+          2
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 8017311560929,
+          "tokens_burnt_yocto": "801731156092900000000"
+        }
+      ],
+      "seed": 2,
+      "start_depth": 1,
+      "style": "survivor-with-graves",
+      "tokens_burnt_near": 0.0008346065793239,
+      "tokens_burnt_yocto": "834606579323900000000",
+      "total_gas_burnt": 8346065793239,
+      "tx_conversion_gas_burnt": 328754232310
+    },
+    {
+      "account": "g20s3.test.near",
+      "args_bytes": 423,
+      "depths_visited": 3,
+      "deterministic_equal": true,
+      "died": false,
+      "final_depth": 3,
+      "function_call_receipt_gas_burnt": 6983077984793,
+      "graves_in": 20,
+      "inventory_in": [],
+      "kills": 24,
+      "moves_applied": 300,
+      "moves_in_log": 300,
+      "n": 300,
+      "picked": [
+        [
+          3,
+          3
+        ],
+        [
+          1,
+          58
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "receipts": [
+        {
+          "executor_id": "dev-20261107151550-20708218104020.test.near",
+          "gas_burnt": 6983077984793,
+          "tokens_burnt_yocto": "698307798479300000000"
+        }
+      ],
+      "seed": 3,
+      "start_depth": 1,
+      "style": "survivor-with-graves",
+      "tokens_burnt_near": 0.0007311832217103,
+      "tokens_burnt_yocto": "731183221710300000000",
+      "total_gas_burnt": 7311832217103,
+      "tx_conversion_gas_burnt": 328754232310
+    }
+  ],
+  "sandbox": {
+    "latest_protocol_version": 88,
+    "node_build": "2.14.0",
+    "node_version": "2.14.0",
+    "protocol_version": 88
+  },
+  "seeds": [
+    1,
+    2,
+    3
+  ],
+  "summary": [
+    {
+      "deterministic_equal_all": true,
+      "final_depths": [
+        1,
+        1,
+        1
+      ],
+      "max_pct_of_1000_tgas": 0.2890742487247,
+      "max_tgas": 2.890742487247,
+      "median_tgas": 2.818349007794,
+      "min_tgas": 2.765676467409,
+      "moves_applied": [
+        50,
+        50,
+        50
+      ],
+      "n": 50,
+      "style": "survivor"
+    },
+    {
+      "deterministic_equal_all": true,
+      "final_depths": [
+        3,
+        4,
+        3
+      ],
+      "max_pct_of_1000_tgas": 0.42326496034329997,
+      "max_tgas": 4.232649603433,
+      "median_tgas": 3.918926602055,
+      "min_tgas": 3.891339235979,
+      "moves_applied": [
+        300,
+        300,
+        300
+      ],
+      "n": 300,
+      "style": "survivor"
+    },
+    {
+      "deterministic_equal_all": true,
+      "final_depths": [
+        10,
+        10,
+        9
+      ],
+      "max_pct_of_1000_tgas": 0.6703387041408,
+      "max_tgas": 6.703387041408,
+      "median_tgas": 6.632301790713,
+      "min_tgas": 6.356591164338,
+      "moves_applied": [
+        1000,
+        1000,
+        1000
+      ],
+      "n": 1000,
+      "style": "survivor"
+    },
+    {
+      "deterministic_equal_all": true,
+      "final_depths": [
+        15,
+        15,
+        15
+      ],
+      "max_pct_of_1000_tgas": 1.4007677989601999,
+      "max_tgas": 14.007677989602,
+      "median_tgas": 13.960060220238,
+      "min_tgas": 13.861833599406,
+      "moves_applied": [
+        3000,
+        3000,
+        3000
+      ],
+      "n": 3000,
+      "style": "survivor"
+    },
+    {
+      "deterministic_equal_all": true,
+      "final_depths": [
+        2,
+        1,
+        2
+      ],
+      "max_pct_of_1000_tgas": 0.2610524014077,
+      "max_tgas": 2.610524014077,
+      "median_tgas": 2.609988998616,
+      "min_tgas": 2.551451411604,
+      "moves_applied": [
+        50,
+        50,
+        50
+      ],
+      "n": 50,
+      "style": "rusher"
+    },
+    {
+      "deterministic_equal_all": true,
+      "final_depths": [
+        7,
+        7,
+        8
+      ],
+      "max_pct_of_1000_tgas": 0.4776597217872,
+      "max_tgas": 4.776597217872,
+      "median_tgas": 3.94619964466,
+      "min_tgas": 3.906153735385,
+      "moves_applied": [
+        300,
+        300,
+        300
+      ],
+      "n": 300,
+      "style": "rusher"
+    },
+    {
+      "deterministic_equal_all": true,
+      "final_depths": [
+        12,
+        7,
+        14
+      ],
+      "max_pct_of_1000_tgas": 0.7874490335095,
+      "max_tgas": 7.874490335095,
+      "median_tgas": 5.896605342373,
+      "min_tgas": 5.012480477268,
+      "moves_applied": [
+        538,
+        305,
+        626
+      ],
+      "n": 1000,
+      "style": "rusher"
+    },
+    {
+      "deterministic_equal_all": true,
+      "final_depths": [
+        12,
+        7,
+        16
+      ],
+      "max_pct_of_1000_tgas": 0.9290051235576,
+      "max_tgas": 9.290051235576,
+      "median_tgas": 7.628913341591,
+      "min_tgas": 5.476065266549,
+      "moves_applied": [
+        540,
+        305,
+        760
+      ],
+      "n": 3000,
+      "style": "rusher"
+    }
+  ],
+  "threshold": {
+    "limit_tgas": 100,
+    "n": 300,
+    "pass": true,
+    "worst_tgas_any_style": 4.776597217872
+  },
+  "unix_time": 1794064602,
+  "wasm": {
+    "file": "<CARGO_TARGET_DIR>/wasm32-unknown-unknown/release/ls_contract.wasm",
+    "size_bytes": 232733
+  }
+}

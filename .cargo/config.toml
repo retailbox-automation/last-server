@@ -1,0 +1,4 @@
+# near-sdk 5.30 only calls NEAR host functions (hashing, panics, etc.) under `--cfg near`,
+# which is what cargo-near sets. Plain `cargo build --target wasm32-unknown-unknown` gets it here.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "near"]
