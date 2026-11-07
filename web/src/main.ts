@@ -15,7 +15,7 @@ import { loadRules, rulesInfo } from './sim.ts';
 import type { DiveEntry } from './sim.ts';
 import { storedSecret } from './keys.ts';
 import { config } from './config.ts';
-import { allGraves, diveEntry, settleDive, startDive, toSimGrave } from './world.ts';
+import { allGraves, diveEntry, settleDive, startDive } from './world.ts';
 import type { DiveTicket, GraveView } from './world.ts';
 import type { SavedDive } from './divelog.ts';
 import type { CallResult } from './tx.ts';
@@ -54,8 +54,8 @@ function showSurface(session: Session, flash?: Flash): void {
 
 async function entryFor(session: Session): Promise<{ entry: DiveEntry; graves: GraveView[] }> {
   const [entry, graves] = await Promise.all([diveEntry(session.accountId), allGraves()]);
-  // The contract hands over the locked loadout; the graves it will meet come from the per-depth views.
-  return { entry: { ...entry, graves: entry.graves?.length ? entry.graves : graves.map(toSimGrave) }, graves };
+  // `dive_entry` is exactly what settle_dive replays: the locked loadout and the graves, in stored order.
+  return { entry, graves };
 }
 
 async function beginDive(session: Session, loadout: Array<[string, number]>): Promise<void> {
@@ -64,7 +64,13 @@ async function beginDive(session: Session, loadout: Array<[string, number]>): Pr
   try {
     start = await startDive(session, loadout);
   } catch (e) {
-    showSurface(session, { kind: 'bad', text: `Could not start the dive: ${(e as Error).message}` });
+    const msg = (e as Error).message;
+    showSurface(session, {
+      kind: 'bad',
+      text: /does not exist/.test(msg)
+        ? 'Your account is not on the chain (the testnet may have been reset). Use "Switch player" and enter the same name to create it again.'
+        : `Could not start the dive: ${msg}`,
+    });
     return;
   }
   try {

@@ -13,7 +13,7 @@ import { createServer } from 'node:http';
 import { decodeSignedTransaction, baseEncode, PublicKey } from 'near-api-js';
 import { createApp } from '../src/app.ts';
 import { DEFAULT_LIMITS } from '../src/config.ts';
-import { initSync, item_names, run_dive, core_hash } from '../../web/src/wasm/ls_wasm.js';
+import { initSync, item_names, run_dive, core_hash, rules_hash } from '../../web/src/wasm/ls_wasm.js';
 
 initSync({ module: readFileSync(new URL('../../web/src/wasm/ls_wasm_bg.wasm', import.meta.url)) });
 
@@ -33,9 +33,11 @@ const locked = new Map(); // account -> Map(token -> n)
 const active = new Map(); // account -> { ticket, loadout: [[id, n]] }
 const stats = new Map(); // account -> { dives, deaths, deepest }
 let graves = [
-  { id: 1, owner_id: `mara.${PARENT}`, depth: 3, x: 10, y: 10, items: [[ids.get('gold'), 12], [ids.get('blade'), 1]] },
-  { id: 2, owner_id: `tom.${PARENT}`, depth: 2, x: 20, y: 12, items: [[ids.get('plate'), 1]] },
+  { id: 1, owner_id: `mara.${PARENT}`, depth: 3, x: 10, y: 10, items: [[ids.get('gold'), 12], [ids.get('blade'), 1]], day: day(), dive_id: '0' },
+  { id: 2, owner_id: `tom.${PARENT}`, depth: 2, x: 20, y: 12, items: [[ids.get('plate'), 1]], day: day(), dive_id: '0' },
 ];
+const graveView = (g) => ({ ...g, items: g.items.map(([id, n]) => [names.get(id), String(n)]) });
+const coreGrave = ({ id, depth, x, y, items }) => ({ id, depth, x, y, items });
 let nextGrave = 3;
 let nextDive = 1;
 
@@ -49,7 +51,8 @@ class Panic extends Error {}
 
 function entryOf(account) {
   const a = active.get(account);
-  return { start_depth: a?.ticket.start_depth ?? 1, inventory: a?.loadout ?? [], graves: [] };
+  const start = a?.ticket.start_depth ?? 1;
+  return { start_depth: start, inventory: a?.loadout ?? [], graves: graves.filter((g) => g.depth >= start).sort((p, q) => p.depth - q.depth).map(coreGrave) };
 }
 
 function view(method, args) {
@@ -58,7 +61,7 @@ function view(method, args) {
     case 'day_seed': return String(seedOf(args.day));
     case 'active_dive': return active.get(args.account_id)?.ticket ?? null;
     case 'dive_entry': return entryOf(args.account_id);
-    case 'graves': return graves.filter((g) => g.depth === args.depth);
+    case 'graves': return graves.filter((g) => g.depth === args.depth).map(graveView);
     case 'graves_summary': {
       const c = new Map();
       for (const g of graves) c.set(g.depth, (c.get(g.depth) ?? 0) + 1);
@@ -66,13 +69,14 @@ function view(method, args) {
     }
     case 'player': {
       const a = args.account_id;
+      const free = new Map([...bal(a)].map(([t, n]) => [t, n - (lock(a).get(t) ?? 0)]));
       return {
-        stash: pairs(bal(a)).map(([t, n]) => [t, String(n)]),
+        stash: pairs(free).map(([t, n]) => [t, String(n)]),
         locked: pairs(lock(a)).map(([t, n]) => [t, String(n)]),
         ...stat(a),
       };
     }
-    case 'core_version': return `mock ls-core core-hash ${core_hash()}`;
+    case 'core_version': return { contract: 'mock', ls_core: 'mock', rules_sha256: rules_hash(), core_sha256: core_hash() };
     default: throw new Panic(`no such view: ${method}`);
   }
 }
@@ -97,7 +101,7 @@ function call(sender, method, args) {
     if (!a || a.ticket.dive_id !== String(args.dive_id)) throw new Panic('no active dive');
     const moves = Buffer.from(args.moves, 'base64');
     if (moves.length > 4000) throw new Panic('move log too long');
-    const entry = { start_depth: a.ticket.start_depth, inventory: a.loadout, graves: graves.map(({ id, depth, x, y, items }) => ({ id, depth, x, y, items })) };
+    const entry = { start_depth: a.ticket.start_depth, inventory: a.loadout, graves: graves.map(coreGrave) };
     const o = JSON.parse(run_dive(BigInt(a.ticket.seed), JSON.stringify(entry), moves));
     // Apply. Unlock the loadout, burn what the rules burned, mint finds, move graves.
     for (const [t, n] of pairs(lock(sender))) add(lock(sender), t, -n);
@@ -111,7 +115,7 @@ function call(sender, method, args) {
     }
     if (o.died) {
       for (const [id, n] of o.dropped_into_grave) add(bal(sender), names.get(id), -n);
-      graves.push({ id: nextGrave++, owner_id: sender, depth: o.final_depth, x: o.death_pos?.[0] ?? 1, y: o.death_pos?.[1] ?? 1, items: o.dropped_into_grave });
+      graves.push({ id: nextGrave++, owner_id: sender, depth: o.final_depth, x: o.death_pos?.[0] ?? 1, y: o.death_pos?.[1] ?? 1, items: o.dropped_into_grave, day: day(), dive_id: a.ticket.dive_id });
     }
     const s = stat(sender);
     s.dives += 1;
@@ -185,7 +189,9 @@ function rpc(method, params) {
         }
         return { ...base, nonce: 1, permission: 'FullAccess' };
       }
-      case 'view_account': return { ...base, amount: '1000000000000000000000000', locked: '0', code_hash: '11111111111111111111111111111111', storage_usage: 100, storage_paid_at: 0, global_contract_hash: null, global_contract_account_id: null };
+      case 'view_account':
+        if (![PARENT, WORLD].includes(params.account_id) && !accounts.has(params.account_id)) return { ...base, logs: [], error: `account ${params.account_id} does not exist while viewing` };
+        return { ...base, amount: '1000000000000000000000000', locked: '0', code_hash: '11111111111111111111111111111111', storage_usage: 100, storage_paid_at: 0, global_contract_hash: null, global_contract_account_id: null };
       default: throw Object.assign(new Error('unsupported query'), { rpc: true });
     }
   }

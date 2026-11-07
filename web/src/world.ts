@@ -6,7 +6,7 @@ import { view } from './chain.ts';
 import type { Session } from './keys.ts';
 import { callWorld } from './tx.ts';
 import type { CallResult } from './tx.ts';
-import type { DiveEntry, DiveOutcome, Grave, ItemAmount } from './sim.ts';
+import type { DiveEntry, DiveOutcome } from './sim.ts';
 
 export interface DiveTicket {
   dive_id: string;
@@ -15,20 +15,22 @@ export interface DiveTicket {
   start_depth: number;
 }
 
-/** One row of the `graves(depth)` view. */
+/** One row of the `graves(depth)` view. Items are [token id, amount as a string]. */
 export interface GraveView {
-  id: string | number;
+  id: number;
   owner_id: string;
   depth: number;
   x: number;
   y: number;
-  items: ItemAmount[];
+  items: Array<[string, string]>;
+  day: number;
+  dive_id: string;
 }
 
 export interface PlayerView {
-  /** token id -> amount (strings, u128) the player owns. */
+  /** Balances free to carry or transfer: [token id, amount string]. */
   stash: Array<[string, string]>;
-  /** Part of the stash currently locked inside an active dive. */
+  /** Balances carried in the active dive. */
   locked: Array<[string, string]>;
   dives: number;
   deaths: number;
@@ -41,17 +43,19 @@ export const diveEntry = (accountId: string) => view<DiveEntry>('dive_entry', { 
 export const gravesSummary = () => view<Array<[number, number]>>('graves_summary');
 export const gravesAt = (depth: number) => view<GraveView[]>('graves', { depth });
 export const player = (accountId: string) => view<PlayerView>('player', { account_id: accountId });
-export const coreVersion = () => view<string>('core_version');
+export interface CoreVersion {
+  contract: string;
+  ls_core: string;
+  rules_sha256: string;
+  core_sha256: string;
+}
+export const coreVersion = () => view<CoreVersion>('core_version');
 
 /** Every grave of every depth that has one, in the order the contract lists them per depth. */
 export async function allGraves(): Promise<GraveView[]> {
   const depths = (await gravesSummary()).filter(([, n]) => n > 0).map(([d]) => d);
   const perDepth = await Promise.all(depths.map((d) => gravesAt(d)));
   return perDepth.flat();
-}
-
-export function toSimGrave(g: GraveView): Grave {
-  return { id: Number(g.id), depth: g.depth, x: g.x, y: g.y, items: g.items };
 }
 
 /** loadout: token id -> amount. */

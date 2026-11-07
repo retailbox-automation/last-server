@@ -1,7 +1,7 @@
 import { saveDive } from '../divelog.ts';
 import type { DiveBase } from '../divelog.ts';
 import { h } from '../dom.ts';
-import { describeItems, itemLabel, shortName, tokenOf } from '../items.ts';
+import { describeTokens, itemLabel, shortName, tokenOf } from '../items.ts';
 import type { Session } from '../keys.ts';
 import { drawView, setupCanvas } from '../render.ts';
 import { DiveSession, MOVE, rulesInfo } from '../sim.ts';
@@ -43,7 +43,7 @@ function describe(ev: GameEvent, graveById: Map<number, GraveView>): string | nu
     case 'picked': return `You pick up ${ev.amount} ${itemLabel(tokenOf(ev.item))}.`;
     case 'grave_looted': {
       const g = graveById.get(ev.grave_id);
-      return g ? `You empty ${shortName(g.owner_id)}'s grave: ${describeItems(g.items)}.` : 'You empty a grave.';
+      return g ? `You empty ${shortName(g.owner_id)}'s grave: ${describeTokens(g.items)}.` : 'You empty a grave.';
     }
     case 'blade_broke': return 'Your blade breaks. It is gone for good.';
     case 'potion_drunk': return `You drink a potion (+${ev.healed} HP).`;

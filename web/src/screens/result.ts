@@ -1,6 +1,6 @@
 import { explorerTxUrl } from '../chain.ts';
 import { h } from '../dom.ts';
-import { describeItems, shortName } from '../items.ts';
+import { describeItems, describeTokens, shortName } from '../items.ts';
 import type { DiveOutcome, GameEvent } from '../sim.ts';
 import type { GraveView } from '../world.ts';
 import type { CallResult } from '../tx.ts';
@@ -27,7 +27,7 @@ function whyLines(o: DiveOutcome, history: GameEvent[], graves: GraveView[]): st
   lines.push(`You reached depth ${o.final_depth} in ${o.moves_applied} moves and defeated ${o.kills} monster${o.kills === 1 ? '' : 's'}.`);
   for (const id of o.looted_graves) {
     const g = byId.get(id);
-    lines.push(g ? `Grave met: you emptied ${shortName(g.owner_id)}'s grave at depth ${g.depth} and took ${describeItems(g.items)}.` : `Grave met: you emptied grave #${id}.`);
+    lines.push(g ? `Grave met: you emptied ${shortName(g.owner_id)}'s grave at depth ${g.depth} and took ${describeTokens(g.items)}.` : `Grave met: you emptied grave #${id}.`);
   }
   const lockedHits = history.filter((e) => e.kind === 'door_locked').length;
   if (o.keys_used > 0) lines.push(`Key used: ${o.keys_used} blue key burned to open a door${o.vault_opened ? '; the vault behind it was yours' : ''}.`);

@@ -1,6 +1,7 @@
 import { accountExists } from '../chain.ts';
 import { config, nameProblem } from '../config.ts';
 import { h } from '../dom.ts';
+import { KeyPair } from 'near-api-js';
 import { newKeyPair, saveSession, storedSecret } from '../keys.ts';
 import type { Session } from '../keys.ts';
 import { RelayerRefused, RelayerUnavailable, signup } from '../relayer.ts';
@@ -12,9 +13,11 @@ import { RelayerRefused, RelayerUnavailable, signup } from '../relayer.ts';
 async function signIn(name: string): Promise<Session> {
   const accountId = `${name}.${config.parentAccountId}`;
   const known = storedSecret(name);
-  if (known !== null) return { name, accountId, secretKey: known };
+  // A key kept in this browser resumes at once, as long as its account still exists on the chain
+  // (an unreachable RPC counts as "exists"; a reset testnet does not, and the account is created again).
+  if (known !== null && (await accountExists(accountId).catch(() => true))) return { name, accountId, secretKey: known };
 
-  const key = newKeyPair();
+  const key = known !== null ? KeyPair.fromString(known as `ed25519:${string}`) : newKeyPair();
   try {
     await signup(name, key.getPublicKey().toString());
   } catch (e) {

@@ -1,7 +1,7 @@
 import { loadDive } from '../divelog.ts';
 import type { SavedDive } from '../divelog.ts';
 import { h } from '../dom.ts';
-import { describeItems, itemLabel, shortName } from '../items.ts';
+import { describeTokens, itemLabel, shortName } from '../items.ts';
 import type { Session } from '../keys.ts';
 import { rulesInfo } from '../sim.ts';
 import { activeDive, allGraves, coreVersion, currentDay, player } from '../world.ts';
@@ -19,15 +19,9 @@ export interface SurfaceActions {
   onSwitchPlayer: () => void;
 }
 
-/** token id -> amount the player can still put into a loadout. */
+/** token id -> amount the player can put into a loadout (the contract's `stash` is already net of locked items). */
 function available(p: PlayerView): Map<string, number> {
-  const locked = new Map(p.locked.map(([t, n]) => [t, Number(n)]));
-  const out = new Map<string, number>();
-  for (const [t, n] of p.stash) {
-    const free = Number(n) - (locked.get(t) ?? 0);
-    if (free > 0) out.set(t, free);
-  }
-  return out;
+  return new Map(p.stash.map(([t, n]) => [t, Number(n)] as [string, number]).filter(([, n]) => n > 0));
 }
 
 function gravesCard(graves: GraveView[]): HTMLElement {
@@ -45,7 +39,7 @@ function gravesCard(graves: GraveView[]): HTMLElement {
               h('div', { class: 'grave' },
                 h('span', { class: 'skull', 'aria-hidden': 'true' }, '☠'),
                 h('strong', {}, shortName(g.owner_id)),
-                h('span', {}, describeItems(g.items)),
+                h('span', {}, describeTokens(g.items)),
               )))
           : h('span', { class: 'muted' }, 'No graves here yet'),
       ),
@@ -83,9 +77,9 @@ export function surfaceScreen(session: Session, actions: SurfaceActions, flash?:
     // The page and the contract must run the same rules; if the contract names a different hash, say so.
     const rules = rulesInfo();
     const chainRules = await coreVersion().catch(() => null);
-    if (chainRules !== null && !chainRules.includes(rules.rulesHash) && !chainRules.includes(rules.coreHash)) {
+    if (chainRules !== null && (chainRules.rules_sha256 !== rules.rulesHash || chainRules.core_sha256 !== rules.coreHash)) {
       parts.push(h('div', { class: 'banner warn', role: 'alert' },
-        `This page runs rules ${rules.rulesHash.slice(0, 12)} but the contract reports "${chainRules}". Results shown here may differ from what the contract records.`));
+        `This page runs rules ${rules.rulesHash.slice(0, 12)} but the contract reports ${chainRules.rules_sha256.slice(0, 12)}. Results shown here may differ from what the contract records.`));
     }
     if (flash) {
       parts.push(h('div', { class: `banner ${flash.kind}`, role: 'status' }, flash.text,

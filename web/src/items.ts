@@ -30,8 +30,13 @@ export function tokenOf(id: number): string {
 }
 
 export function describeItems(items: ItemAmount[]): string {
+  return describeTokens(items.map(([id, n]) => [tokenOf(id), String(n)]));
+}
+
+/** For contract views, which name items by token id and amounts as strings. */
+export function describeTokens(items: Array<[string, string]>): string {
   if (items.length === 0) return 'nothing';
-  return items.map(([id, n]) => `${n} ${itemLabel(tokenOf(id))}`).join(', ');
+  return items.map(([token, n]) => `${n} ${itemLabel(token)}`).join(', ');
 }
 
 /** `mara.lastserver.testnet` -> `mara` */
