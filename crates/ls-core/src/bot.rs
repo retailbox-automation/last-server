@@ -15,6 +15,9 @@ pub enum Style {
     Looter,
     /// Walks up to the nearest monster and never fights back, so it dies.
     Doomed,
+    /// Runs for the stairs every turn (fighting only what is adjacent): the most new maps per
+    /// move, i.e. the expensive end of plausible logs for the gas benchmark.
+    Rusher,
 }
 
 /// Plays `n` moves with the given style and returns the log. If the player dies early the
@@ -50,6 +53,10 @@ fn choose(d: &Dive<'_>, style: Style) -> u8 {
         if d.level.monster_at(d.x + dx, d.y + dy).is_some() {
             return mv;
         }
+    }
+    if style == Style::Rusher {
+        let stairs = d.level.stairs;
+        return first_step(d, |x, y| (x, y) == stairs).unwrap_or(MOVE_WAIT);
     }
     let max = d.max_hp();
     // 2. Rest when hurt.
