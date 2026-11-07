@@ -151,11 +151,11 @@ export class NearChain implements Chain {
     try {
       const [block, state] = await Promise.all([
         this.provider.viewBlock({ finality: 'final' }),
-        this.account.getState(),
+        this.provider.viewAccount({ accountId: this.account.accountId, blockQuery: { finality: 'final' } }),
       ]);
       return {
         blockHeight: Number(block.header.height),
-        balanceNear: formatNearAmount(state.balance.available.toString(), 2),
+        balanceNear: formatNearAmount(state.amount.toString(), 2),
       };
     } catch (e) {
       throw new ChainError('chain_error', `health check failed: ${String((e as Error).message ?? e)}`);

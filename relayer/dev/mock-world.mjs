@@ -10,7 +10,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { decodeSignedTransaction, baseEncode } from 'near-api-js';
+import { decodeSignedTransaction, baseEncode, PublicKey } from 'near-api-js';
 import { createApp } from '../src/app.ts';
 import { DEFAULT_LIMITS } from '../src/config.ts';
 import { initSync, item_names, run_dive, core_hash } from '../../web/src/wasm/ls_wasm.js';
@@ -176,17 +176,35 @@ function rpc(method, params) {
         const args = params.args_base64 ? JSON.parse(Buffer.from(params.args_base64, 'base64').toString() || '{}') : {};
         return { ...base, logs: [], result: [...Buffer.from(JSON.stringify(view(params.method_name, args)))] };
       }
-      case 'view_access_key': return { ...base, nonce: 1, permission: 'FullAccess' };
-      case 'view_account': return { ...base, amount: '1000000000000000000000000', locked: '0', code_hash: '11111111111111111111111111111111', storage_usage: 100, storage_paid_at: 0 };
+      case 'view_access_key': {
+        // Like the real RPC: query failures come back as result.error strings.
+        const id = params.account_id;
+        if (id !== PARENT) {
+          if (!accounts.has(id)) return { ...base, logs: [], error: `account ${id} does not exist while viewing` };
+          if (accounts.get(id) !== params.public_key) return { ...base, logs: [], error: `access key ${params.public_key} does not exist while viewing` };
+        }
+        return { ...base, nonce: 1, permission: 'FullAccess' };
+      }
+      case 'view_account': return { ...base, amount: '1000000000000000000000000', locked: '0', code_hash: '11111111111111111111111111111111', storage_usage: 100, storage_paid_at: 0, global_contract_hash: null, global_contract_account_id: null };
       default: throw Object.assign(new Error('unsupported query'), { rpc: true });
     }
   }
   if (method === 'send_tx' || method === 'broadcast_tx_commit') {
     const signed = decodeSignedTransaction(Buffer.from(params.signed_tx_base64 ?? params[0], 'base64'));
     const t = signed.transaction;
-    const fc = t.actions[0]?.functionCall;
-    if (!fc) throw new Error('mock: only function calls');
-    const r = runAction(t.signerId, fc.methodName, fc.args);
+    const first = t.actions[0];
+    let r;
+    if (first?.createAccount) {
+      const key = PublicKey.from(t.actions.find((a) => a.addKey).addKey.publicKey).toString();
+      if (accounts.has(t.receiverId)) r = { ok: false, failure: JSON.stringify({ ActionError: { index: 0, kind: { AccountAlreadyExists: { account_id: t.receiverId } } } }) };
+      else { accounts.set(t.receiverId, key); r = { ok: true, resultBase64: '' }; }
+    } else if (first?.signedDelegate) {
+      const da = first.signedDelegate.delegateAction;
+      const fc = da.actions[0].functionCall;
+      r = runAction(da.senderId, fc.methodName, fc.args);
+    } else if (first?.functionCall) {
+      r = runAction(t.signerId, first.functionCall.methodName, first.functionCall.args);
+    } else throw new Error('mock: unsupported action');
     const status = r.ok ? { SuccessValue: r.resultBase64 } : { Failure: JSON.parse(r.failure) };
     return { final_execution_status: 'EXECUTED_OPTIMISTIC', status, transaction: {}, transaction_outcome: { id: txId(), outcome: { status } }, receipts_outcome: [] };
   }
