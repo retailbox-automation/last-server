@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/ls-core", "contract", "spike"]
+members = ["crates/ls-core", "crates/ls-wasm", "contract", "spike"]
 
 [workspace.package]
 edition = "2021"
