@@ -10,6 +10,7 @@ import {
   encodeSignedDelegate,
   getTransactionLastResult,
 } from 'near-api-js';
+import { toBase64 } from './bytes.ts';
 import { provider } from './chain.ts';
 import { config } from './config.ts';
 import type { Session } from './keys.ts';
@@ -34,12 +35,6 @@ export class CallFailed extends Error {
     this.name = 'CallFailed';
     this.txHash = txHash;
   }
-}
-
-function toBase64(bytes: Uint8Array): string {
-  let s = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
 }
 
 function playerAccount(session: Session): Account {
