@@ -71,8 +71,8 @@ export interface DiveOutcome {
 export interface Grave { id: number; depth: number; x: number; y: number; items: ItemAmount[] }
 export interface DiveEntry { start_depth: number; inventory: ItemAmount[]; graves: Grave[] }
 
-export const MOVE = { up: 0, down: 1, left: 2, right: 3, wait: 4 } as const;
-export const TILE = { wall: 0, floor: 1, stairs: 2 } as const;
+export const MOVE = { up: 0, down: 1, left: 2, right: 3, wait: 4, potion: 5 } as const;
+export const TILE = { wall: 0, floor: 1, stairs: 2, door: 3 } as const;
 
 let ready: Promise<void> | null = null;
 

@@ -32,6 +32,7 @@ const KEYS: Record<string, number> = {
   ArrowLeft: MOVE.left, a: MOVE.left, A: MOVE.left,
   ArrowRight: MOVE.right, d: MOVE.right, D: MOVE.right,
   ' ': MOVE.wait, '.': MOVE.wait,
+  p: MOVE.potion, P: MOVE.potion, e: MOVE.potion, E: MOVE.potion,
 };
 
 function describe(ev: GameEvent, graveById: Map<number, GraveView>): string | null {
@@ -164,7 +165,7 @@ export function diveScreen(opts: DiveScreenOptions): HTMLElement {
   const pad = h('div', { class: 'pad', 'aria-label': 'Touch controls' },
     h('span'), padButton('Up', '↑', MOVE.up), h('span'),
     padButton('Left', '←', MOVE.left), padButton('Wait', '·', MOVE.wait), padButton('Right', '→', MOVE.right),
-    h('span'), padButton('Down', '↓', MOVE.down), h('span'),
+    padButton('Drink a potion', 'P', MOVE.potion), padButton('Down', '↓', MOVE.down), h('span'),
   );
   function padButton(label: string, glyph: string, mv: number): HTMLButtonElement {
     return h('button', { type: 'button', 'aria-label': label, onclick: () => play(mv) }, glyph);
@@ -178,6 +179,6 @@ export function diveScreen(opts: DiveScreenOptions): HTMLElement {
     h('div', { class: 'hud' }, h('strong', {}, 'You carry:'), inventory),
     log,
     pad,
-    h('p', { class: 'muted small' }, 'Arrow keys or WASD to move, space to wait. Walk into a monster to attack. Go down the green stairs for better loot and older graves.'),
+    h('p', { class: 'muted small' }, 'Arrow keys or WASD to move, space to wait, P to drink a potion. Walk into a monster to attack. Go down the green stairs for better loot and older graves.'),
   );
 }
