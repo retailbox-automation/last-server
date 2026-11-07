@@ -49,7 +49,11 @@ fn choose(d: &DiveSim, style: Style) -> u8 {
             return MOVE_WAIT;
         }
         // Walk next to the nearest monster (the step that would enter it is never taken).
-        return first_step(d, false, |x, y| DIRS.iter().any(|&(_, dx, dy)| monster_here(x + dx, y + dy)))
+        let near_monster = |x: i32, y: i32| DIRS.iter().any(|&(_, dx, dy)| monster_here(x + dx, y + dy));
+        let avoid_graves = matches!(style, Style::DieAt(_));
+        // A grave may block the only corridor: then walk over it after all.
+        return first_step(d, avoid_graves, near_monster)
+            .or_else(|| first_step(d, false, near_monster))
             .filter(|&mv| {
                 let (_, dx, dy) = DIRS[mv as usize];
                 !monster_here(d.x + dx, d.y + dy)
@@ -100,7 +104,8 @@ fn choose(d: &DiveSim, style: Style) -> u8 {
     let max_depth = if let Style::DieAt(depth) = style { depth } else { BOT_MAX_DEPTH };
     if d.hp >= max && d.depth < max_depth {
         let stairs = d.level.stairs;
-        if let Some(mv) = first_step(d, avoid_graves, |x, y| (x, y) == stairs) {
+        let to_stairs = |x: i32, y: i32| (x, y) == stairs;
+        if let Some(mv) = first_step(d, avoid_graves, to_stairs).or_else(|| first_step(d, false, to_stairs)) {
             return mv;
         }
     }
