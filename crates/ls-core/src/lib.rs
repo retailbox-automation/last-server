@@ -595,15 +595,14 @@ impl<'a> Dive<'a> {
             }
             if (m.x - self.x).abs() + (m.y - self.y).abs() == 1 {
                 if self.rng.below(100) < 60 {
-                    let dmg = 1 + self.rng.below(2 + (d / 6) as u32) as i32 - self.armor();
-                    if dmg > 0 {
-                        self.hp -= dmg;
-                        if self.hp <= 0 {
-                            self.hp = 0;
-                            self.died = true;
-                            self.death_pos = Some((self.x as u8, self.y as u8));
-                            return;
-                        }
+                    // Armor softens a hit but every hit does at least 1 damage.
+                    let raw = 1 + self.rng.below(2 + (d / 6) as u32) as i32;
+                    self.hp -= (raw - self.armor()).max(1);
+                    if self.hp <= 0 {
+                        self.hp = 0;
+                        self.died = true;
+                        self.death_pos = Some((self.x as u8, self.y as u8));
+                        return;
                     }
                 }
             } else {

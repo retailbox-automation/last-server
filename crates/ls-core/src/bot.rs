@@ -85,7 +85,7 @@ fn choose(d: &Dive<'_>, style: Style) -> u8 {
 }
 
 /// The bot stops taking stairs here; deeper, its simple tactics die within a few hundred moves.
-pub const BOT_MAX_DEPTH: u32 = 20;
+pub const BOT_MAX_DEPTH: u32 = 15;
 
 const DIRS: [(u8, i32, i32); 4] =
     [(MOVE_UP, 0, -1), (MOVE_DOWN, 0, 1), (MOVE_LEFT, -1, 0), (MOVE_RIGHT, 1, 0)];
