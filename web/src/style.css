@@ -44,7 +44,7 @@ p { margin: 0 0 10px; }
 .small { font-size: 0.85rem; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-.row.between { justify-content: space-between; }
+.row.between { justify-content: space-between; margin-bottom: 12px; }
 .grow { flex: 1 1 auto; }
 button, .btn {
   font: inherit; font-weight: 600; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink);

@@ -3,7 +3,8 @@ import type { SavedDive } from '../divelog.ts';
 import { h } from '../dom.ts';
 import { describeItems, itemLabel, shortName } from '../items.ts';
 import type { Session } from '../keys.ts';
-import { activeDive, allGraves, currentDay, player } from '../world.ts';
+import { rulesInfo } from '../sim.ts';
+import { activeDive, allGraves, coreVersion, currentDay, player } from '../world.ts';
 import type { DiveTicket, GraveView, PlayerView } from '../world.ts';
 
 export interface Flash {
@@ -79,6 +80,13 @@ export function surfaceScreen(session: Session, actions: SurfaceActions, flash?:
     }
 
     const parts: Array<Node | null> = [header];
+    // The page and the contract must run the same rules; if the contract names a different hash, say so.
+    const rules = rulesInfo();
+    const chainRules = await coreVersion().catch(() => null);
+    if (chainRules !== null && !chainRules.includes(rules.rulesHash) && !chainRules.includes(rules.coreHash)) {
+      parts.push(h('div', { class: 'banner warn', role: 'alert' },
+        `This page runs rules ${rules.rulesHash.slice(0, 12)} but the contract reports "${chainRules}". Results shown here may differ from what the contract records.`));
+    }
     if (flash) {
       parts.push(h('div', { class: `banner ${flash.kind}`, role: 'status' }, flash.text,
         ...(flash.links ?? []).flatMap((l) => [' ', h('a', { href: l.url, target: '_blank', rel: 'noopener' }, l.label)])));
