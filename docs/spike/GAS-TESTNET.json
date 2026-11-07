@@ -1,0 +1,98 @@
+{
+  "contract_account": "gas-r5.lastserver.testnet",
+  "deleted_accounts": [
+    "gas-r5.lastserver.testnet"
+  ],
+  "generated_by": "spike/tests/testnet.rs testnet_settle_dive_gas",
+  "network": "testnet",
+  "node_version": "2.14.0-rc.5",
+  "prepaid_tgas": 100,
+  "protocol_version": 88,
+  "runs": [
+    {
+      "account": "survivor300s1-r5.lastserver.testnet",
+      "deterministic_equal": true,
+      "died": false,
+      "explorer": "https://testnet.nearblocks.io/txns/DVi6c325wzMZYCBkGAuExUSMChEL3qKJ6Up14CaNfXqY",
+      "final_depth": 3,
+      "graves_in": 0,
+      "moves_in_log": 300,
+      "seed": 1,
+      "style": "survivor",
+      "tgas": 3.949743828752,
+      "total_gas_burnt": 3949743828752,
+      "tx_hash": "DVi6c325wzMZYCBkGAuExUSMChEL3qKJ6Up14CaNfXqY"
+    },
+    {
+      "account": "survivor300s2-r5.lastserver.testnet",
+      "deterministic_equal": true,
+      "died": false,
+      "explorer": "https://testnet.nearblocks.io/txns/AGuNnDEDkMpw57CERuXcWwEKyj8V4bf2H3eW2VbGo8dy",
+      "final_depth": 4,
+      "graves_in": 0,
+      "moves_in_log": 300,
+      "seed": 2,
+      "style": "survivor",
+      "tgas": 4.435437837241,
+      "total_gas_burnt": 4435437837241,
+      "tx_hash": "AGuNnDEDkMpw57CERuXcWwEKyj8V4bf2H3eW2VbGo8dy"
+    },
+    {
+      "account": "survivor300s3-r5.lastserver.testnet",
+      "deterministic_equal": true,
+      "died": false,
+      "explorer": "https://testnet.nearblocks.io/txns/7AQuGFPS9p2sMzrCrT9JD2ZymrooddU93F4Uubf5Qus7",
+      "final_depth": 3,
+      "graves_in": 0,
+      "moves_in_log": 300,
+      "seed": 3,
+      "style": "survivor",
+      "tgas": 4.047497836379,
+      "total_gas_burnt": 4047497836379,
+      "tx_hash": "7AQuGFPS9p2sMzrCrT9JD2ZymrooddU93F4Uubf5Qus7"
+    },
+    {
+      "account": "survivor1000s1-r5.lastserver.testnet",
+      "deterministic_equal": true,
+      "died": false,
+      "explorer": "https://testnet.nearblocks.io/txns/AS9a6YR591YFMGsNjuKi2xCjqJYkXpFVm9JP5b3f2USf",
+      "final_depth": 10,
+      "graves_in": 0,
+      "moves_in_log": 1000,
+      "seed": 1,
+      "style": "survivor",
+      "tgas": 6.842046033117,
+      "total_gas_burnt": 6842046033117,
+      "tx_hash": "AS9a6YR591YFMGsNjuKi2xCjqJYkXpFVm9JP5b3f2USf"
+    },
+    {
+      "account": "survivor3000s1-r5.lastserver.testnet",
+      "deterministic_equal": true,
+      "died": false,
+      "explorer": "https://testnet.nearblocks.io/txns/D8utes5kdXvTnNwp1eozDMHttiC7SAKsMDeMQG2x8kLG",
+      "final_depth": 15,
+      "graves_in": 0,
+      "moves_in_log": 3000,
+      "seed": 1,
+      "style": "survivor",
+      "tgas": 14.22426140925,
+      "total_gas_burnt": 14224261409250,
+      "tx_hash": "D8utes5kdXvTnNwp1eozDMHttiC7SAKsMDeMQG2x8kLG"
+    },
+    {
+      "account": "rusher300s3-r5.lastserver.testnet",
+      "deterministic_equal": true,
+      "died": false,
+      "explorer": "https://testnet.nearblocks.io/txns/4A3BDf11R1HTJLrd3e6ztTut3yoRK7vdhdavZ7H6jhw1",
+      "final_depth": 8,
+      "graves_in": 0,
+      "moves_in_log": 300,
+      "seed": 3,
+      "style": "rusher",
+      "tgas": 4.98394545168,
+      "total_gas_burnt": 4983945451680,
+      "tx_hash": "4A3BDf11R1HTJLrd3e6ztTut3yoRK7vdhdavZ7H6jhw1"
+    }
+  ],
+  "wasm_size_bytes": 232733
+}
