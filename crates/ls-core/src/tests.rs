@@ -87,6 +87,7 @@ fn random_move_bytes_never_panic() {
             start_depth: rng.below(40),
             inventory: vec![(ITEM_GOLD, rng.below(1000)), (ITEM_PLATE, rng.below(4))],
             graves: vec![Grave {
+                id: i,
                 depth: 1 + rng.below(3),
                 x: rng.below(256) as u8,
                 y: rng.below(256) as u8,
@@ -127,18 +128,18 @@ fn death_leaves_grave_and_next_player_loots_it() {
     }
     assert_eq!(dead.dropped_into_grave, expected);
 
-    let grave = Grave { depth: dead.final_depth, x: gx, y: gy, items: dead.dropped_into_grave };
+    let grave = Grave { id: 77, depth: dead.final_depth, x: gx, y: gy, items: dead.dropped_into_grave };
     let bob_entry = DiveEntry { start_depth: 1, inventory: vec![], graves: vec![grave] };
     let looter = generate_moves(seed, &bob_entry, 400, Style::Looter);
     let bob = run_dive(seed, &bob_entry, &looter);
-    assert_eq!(bob.looted_graves, vec![0]);
+    assert_eq!(bob.looted_graves, vec![77]);
 }
 
 #[test]
 fn grave_on_a_wall_snaps_to_floor() {
     let base = generate_level(5, 1, &[]);
     // (0, 0) is always a wall.
-    let g = Grave { depth: 1, x: 0, y: 0, items: vec![(ITEM_GOLD, 1)] };
+    let g = Grave { id: 1, depth: 1, x: 0, y: 0, items: vec![(ITEM_GOLD, 1)] };
     let l = generate_level(5, 1, &[g]);
     assert_eq!(l.graves.len(), 1);
     assert_ne!(base.tile(l.graves[0].x, l.graves[0].y), WALL);
@@ -147,18 +148,22 @@ fn grave_on_a_wall_snaps_to_floor() {
 #[test]
 fn walls_are_no_ops_that_count() {
     let entry = DiveEntry::default();
-    let mut dive = Dive::new(9, &entry);
+    let mut dive = DiveSim::new(9, &entry);
     dive.level.monsters.clear();
     let mut xs = vec![];
+    let mut bumped = false;
     for _ in 0..40 {
-        assert!(dive.step(MOVE_LEFT));
+        let ev = dive.step(MOVE_LEFT);
+        assert!(ev.applied);
+        bumped |= ev.events.iter().any(|e| matches!(e, Event::Bumped { .. }));
         xs.push(dive.x);
     }
     // The player walks left until a wall, then stays put while the moves keep counting.
     let last = *xs.last().unwrap();
     assert!(xs.windows(2).all(|w| w[1] == w[0] || w[1] == w[0] - 1));
     assert_eq!(dive.level.tile(last - 1, dive.y), WALL);
-    assert_eq!(dive.finish().moves_applied, 40);
+    assert!(bumped);
+    assert_eq!(dive.outcome().moves_applied, 40);
 }
 
 #[test]
@@ -168,4 +173,153 @@ fn item_names_round_trip() {
     }
     assert_eq!(item_name(0), None);
     assert_eq!(item_id("sword"), None);
+}
+
+/// Random logs and graves for the stepping tests.
+fn random_case(rng: &mut Rng, i: u32) -> (u64, DiveEntry, Vec<u8>) {
+    let len = rng.below(1500) as usize;
+    let moves: Vec<u8> = (0..len).map(|_| rng.below(7) as u8).collect();
+    let graves = (0..rng.below(6))
+        .map(|g| Grave {
+            id: g,
+            depth: 1 + rng.below(3),
+            x: rng.below(32) as u8,
+            y: rng.below(32) as u8,
+            items: vec![(ITEM_GOLD, 1 + rng.below(9)), (ITEM_BLADE, rng.below(2))],
+        })
+        .collect();
+    let entry = DiveEntry {
+        start_depth: 1 + rng.below(3),
+        inventory: vec![(ITEM_GOLD, rng.below(50)), (ITEM_BLADE, rng.below(3)), (ITEM_PLATE, rng.below(2))],
+        graves,
+    };
+    (u64::from(i).wrapping_mul(0x9E37_79B9) ^ rng.next_u64(), entry, moves)
+}
+
+#[test]
+fn run_dive_equals_manual_stepping() {
+    let mut rng = Rng::new(0x5EED);
+    let mut deaths = 0;
+    for i in 0..300u32 {
+        let (seed, entry, moves) = random_case(&mut rng, i);
+        let mut sim = DiveSim::new(seed, &entry);
+        let mut applied = 0;
+        for &mv in &moves {
+            let ev = sim.step(mv);
+            if ev.applied {
+                applied += 1;
+            } else {
+                assert!(sim.is_over());
+                assert!(ev.events.is_empty());
+            }
+        }
+        let out = run_dive(seed, &entry, &moves);
+        assert_eq!(sim.outcome(), out, "case {i}");
+        assert_eq!(out.moves_applied, applied);
+        deaths += u32::from(out.died);
+    }
+    // Bot logs too (they reach deeper depths, loot graves and fight a lot).
+    for seed in 0..40u64 {
+        let entry = starter_entry();
+        for style in [Style::Survivor, Style::Rusher, Style::Doomed, Style::Looter] {
+            let moves = generate_moves(seed, &entry, 700, style);
+            let mut sim = DiveSim::new(seed, &entry);
+            for &mv in &moves {
+                sim.step(mv);
+            }
+            assert_eq!(sim.outcome(), run_dive(seed, &entry, &moves), "seed {seed} {style:?}");
+        }
+    }
+    std::println!("random cases that died: {deaths}/300");
+}
+
+/// A lazy source must give the same outcome as the preloaded list, and is asked once per depth.
+#[test]
+fn lazy_graves_match_preloaded() {
+    struct Counting<'a> {
+        all: &'a [Grave],
+        asked: Vec<u32>,
+    }
+    impl GraveSource for Counting<'_> {
+        fn graves_at(&mut self, depth: u32) -> Vec<Grave> {
+            self.asked.push(depth);
+            self.all.iter().filter(|g| g.depth == depth).cloned().collect()
+        }
+    }
+    let mut rng = Rng::new(0xFACE);
+    for i in 0..200u32 {
+        let (seed, entry, moves) = random_case(&mut rng, i);
+        let mut src = Counting { all: &entry.graves, asked: vec![] };
+        let lazy = run_dive_with(seed, &DiveEntry { graves: vec![], ..entry.clone() }, &moves, &mut src);
+        assert_eq!(lazy, run_dive(seed, &entry, &moves), "case {i}");
+        let expected: Vec<u32> = (entry.start_depth.max(1)..=lazy.final_depth).collect();
+        assert_eq!(src.asked, expected, "case {i}: one read per depth entered");
+    }
+}
+
+#[test]
+fn view_tracks_the_dive() {
+    let entry = starter_entry();
+    let moves = generate_moves(3, &entry, 400, Style::Survivor);
+    let mut sim = DiveSim::new(3, &entry);
+    let v0 = sim.view();
+    assert_eq!((v0.width, v0.height), (W as u32, H as u32));
+    assert_eq!(v0.tiles.len(), (W * H) as usize);
+    assert_eq!(v0.depth, 1);
+    assert_eq!(v0.hp, v0.max_hp);
+    assert_eq!(v0.inventory, entry.inventory);
+    assert_eq!(v0.tiles[(v0.y * W + v0.x) as usize], FLOOR);
+    for &mv in &moves {
+        let ev = sim.step(mv);
+        let v = sim.view();
+        assert_eq!(v.moves_applied, sim.outcome().moves_applied);
+        for e in &ev.events {
+            if let Event::Descended { depth } = e {
+                assert_eq!(*depth, v.depth);
+            }
+        }
+        assert!(v.monsters.iter().all(|m| m.hp > 0));
+        assert!(v.tiles[(v.y * W + v.x) as usize] != WALL);
+    }
+    assert!(!sim.view().over);
+}
+
+#[test]
+fn move_limit_ends_the_dive() {
+    let entry = DiveEntry::default();
+    let mut sim = DiveSim::new(1, &entry);
+    sim.level.monsters.clear();
+    // A wall-bumping log that never dies: the stepper stops at MAX_MOVES.
+    let moves = vec![MOVE_WAIT; MAX_MOVES as usize + 10];
+    let mut applied = 0;
+    for &mv in &moves {
+        if sim.step(mv).applied {
+            applied += 1;
+        }
+    }
+    assert_eq!(applied, MAX_MOVES);
+    assert!(sim.is_over());
+    assert!(!sim.is_dead());
+    let out = run_dive(1, &entry, &moves);
+    assert!(out.moves_applied <= MAX_MOVES);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn types_round_trip_through_json() {
+    extern crate serde_json;
+    let entry = starter_entry();
+    let moves = generate_moves(5, &entry, 300, Style::Survivor);
+    let mut sim = DiveSim::new(5, &entry);
+    for &mv in &moves {
+        let ev = sim.step(mv);
+        let j = serde_json::to_string(&ev).unwrap();
+        assert_eq!(serde_json::from_str::<StepEvents>(&j).unwrap(), ev);
+    }
+    let v = sim.view();
+    assert_eq!(serde_json::from_str::<DiveView>(&serde_json::to_string(&v).unwrap()).unwrap(), v);
+    let o = sim.outcome();
+    assert_eq!(serde_json::from_str::<DiveOutcome>(&serde_json::to_string(&o).unwrap()).unwrap(), o);
+    let e = serde_json::to_value(&Event::Attacked { monster: 2, damage: 3, killed: true }).unwrap();
+    assert_eq!(e, serde_json::json!({"kind": "attacked", "monster": 2, "damage": 3, "killed": true}));
 }

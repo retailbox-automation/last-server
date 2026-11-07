@@ -1,13 +1,21 @@
-//! Emits LS_CORE_RULES_HASH: FNV-1a 64 of src/lib.rs (the rules), so the contract can report
-//! exactly which rules it settles dives with.
+//! Emits LS_CORE_RULES_HASH (sha256 of src/rules.rs, all the numbers) and LS_CORE_CORE_HASH
+//! (sha256 of src/lib.rs followed by src/rules.rs, numbers and engine), so the contract and the
+//! browser can report exactly which rules they run.
+
+use sha2::{Digest, Sha256};
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
 
 fn main() {
+    println!("cargo:rerun-if-changed=src/rules.rs");
     println!("cargo:rerun-if-changed=src/lib.rs");
-    let src = std::fs::read("src/lib.rs").expect("read src/lib.rs");
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in src {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    println!("cargo:rustc-env=LS_CORE_RULES_HASH={h:016x}");
+    let rules = std::fs::read("src/rules.rs").expect("read src/rules.rs");
+    let engine = std::fs::read("src/lib.rs").expect("read src/lib.rs");
+    println!("cargo:rustc-env=LS_CORE_RULES_HASH={}", hex(&Sha256::digest(&rules)));
+    let mut core = Sha256::new();
+    core.update(&engine);
+    core.update(&rules);
+    println!("cargo:rustc-env=LS_CORE_CORE_HASH={}", hex(&core.finalize()));
 }

@@ -81,7 +81,7 @@ impl Contract {
     pub fn settle_dive(&mut self, seed: U64, moves: Base64VecU8) -> DiveOutcome {
         let player = env::predecessor_account_id();
         let me = env::current_account_id();
-        let (entry, grave_ids) = self.entry_for(&player);
+        let entry = self.entry_for(&player);
         let outcome = ls_core::run_dive(seed.0, &entry, &moves.0);
 
         // 1. New items from the dungeon are minted to the player.
@@ -98,9 +98,8 @@ impl Contract {
         // 2. Looted graves move from the contract to the player.
         if !outcome.looted_graves.is_empty() {
             let mut loot: Vec<(ItemId, u32)> = Vec::new();
-            for &index in &outcome.looted_graves {
-                let id = grave_ids[index as usize];
-                let grave = self.graves.remove(&id).expect("looted grave exists");
+            for &id in &outcome.looted_graves {
+                let grave = self.graves.remove(&u64::from(id)).expect("looted grave exists");
                 for (item, amount) in grave.items {
                     ls_core::add_item(&mut loot, item, amount);
                 }
@@ -146,7 +145,7 @@ impl Contract {
     /// Exactly what `settle_dive` will feed into `run_dive` for this account right now, so a
     /// client can simulate the dive locally with the same inputs.
     pub fn dive_entry(&self, account_id: AccountId) -> DiveEntry {
-        self.entry_for(&account_id).0
+        self.entry_for(&account_id)
     }
 
     pub fn graves(&self, depth: u32) -> Vec<GraveView> {
@@ -276,8 +275,7 @@ impl Contract {
     }
 
     /// The `run_dive` input for an account: its item balances and every grave on the server.
-    /// Also returns the grave ids in the same order (outcome indexes into this list).
-    fn entry_for(&self, account: &AccountId) -> (DiveEntry, Vec<u64>) {
+    fn entry_for(&self, account: &AccountId) -> DiveEntry {
         let mut inventory = Vec::new();
         for &id in ls_core::ITEM_IDS.iter() {
             let b = self.balance(token_name(id), account);
@@ -286,12 +284,11 @@ impl Contract {
             }
         }
         let mut graves = Vec::new();
-        let mut ids = Vec::new();
         for (id, g) in self.graves.iter() {
-            graves.push(Grave { depth: g.depth, x: g.x, y: g.y, items: g.items.clone() });
-            ids.push(*id);
+            let id = u32::try_from(*id).expect("grave id fits u32");
+            graves.push(Grave { id, depth: g.depth, x: g.x, y: g.y, items: g.items.clone() });
         }
-        (DiveEntry { start_depth: 1, inventory, graves }, ids)
+        DiveEntry { start_depth: 1, inventory, graves }
     }
 }
 
