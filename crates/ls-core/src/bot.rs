@@ -1,6 +1,6 @@
 //! Native move-log generator for tests and the gas benchmark (feature `bot`).
 //!
-//! Not part of the rules: it plays the same `Dive` stepper a real player would, so the logs
+//! Not part of the rules: it plays the same `DiveSim` stepper a real player would, so the logs
 //! it produces walk through rooms, fight, rest, pick things up and take stairs, instead of
 //! bumping one wall thousands of times.
 
@@ -23,17 +23,17 @@ pub enum Style {
 /// Plays `n` moves with the given style and returns the log. If the player dies early the
 /// rest of the log is padded with waits, which the rules ignore after death.
 pub fn generate_moves(seed: u64, entry: &DiveEntry, n: usize, style: Style) -> Vec<u8> {
-    let mut dive = Dive::new(seed, entry);
+    let mut dive = DiveSim::new(seed, entry);
     let mut log = Vec::with_capacity(n);
     while log.len() < n {
-        let mv = if dive.is_dead() { MOVE_WAIT } else { choose(&dive, style) };
+        let mv = if dive.is_over() { MOVE_WAIT } else { choose(&dive, style) };
         log.push(mv);
         dive.step(mv);
     }
     log
 }
 
-fn choose(d: &Dive<'_>, style: Style) -> u8 {
+fn choose(d: &DiveSim, style: Style) -> u8 {
     let monster_here = |x: i32, y: i32| d.level.monster_at(x, y).is_some();
     if style == Style::Doomed {
         let adjacent = DIRS.iter().any(|&(_, dx, dy)| monster_here(d.x + dx, d.y + dy));
@@ -92,7 +92,7 @@ const DIRS: [(u8, i32, i32); 4] =
 
 /// BFS over passable tiles from the player; returns the first move toward the nearest cell
 /// matching `target` (stairs are only entered when they are the target).
-fn first_step(d: &Dive<'_>, target: impl Fn(i32, i32) -> bool) -> Option<u8> {
+fn first_step(d: &DiveSim, target: impl Fn(i32, i32) -> bool) -> Option<u8> {
     const NONE: u8 = 255;
     let mut first = [NONE; CELLS];
     let mut seen = [false; CELLS];

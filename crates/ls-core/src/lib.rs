@@ -1,12 +1,15 @@
 //! Last Server game rules.
 //!
-//! One crate, compiled into the NEAR contract and (later) into the browser. Everything here
-//! must be bit-for-bit deterministic: integer math only, no floats, no clocks, no hash-map
-//! iteration, and the only randomness is the seeded PRNG defined below.
+//! One crate, compiled into the NEAR contract and into the browser. Everything here must be
+//! bit-for-bit deterministic: integer math only, no floats, no clocks, no hash-map iteration,
+//! and the only randomness is the seeded PRNG defined below. Every tunable number lives in
+//! `rules.rs`; this file is the engine that applies them.
 //!
-//! A dive is `(seed, entry, moves) -> outcome`. The entry carries what the contract knows
-//! before the dive (start depth, the player's items, the graves left by other players);
-//! the outcome says what the contract must change afterwards.
+//! A dive is `(seed, entry, moves) -> outcome`. The browser plays it one move at a time with
+//! [`DiveSim`]; the contract re-runs the whole log with [`run_dive`] / [`run_dive_with`], which
+//! are the same `DiveSim::step` loop. Graves are read lazily, one depth at a time, when the dive
+//! enters that depth ([`GraveSource`]), so the cost of a dive does not grow with the number of
+//! graves on the server.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -18,32 +21,24 @@ use alloc::vec::Vec;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+pub mod rules;
+pub use rules::{H, MAX_MOVES, START_DEPTH, W};
+
 #[cfg(any(test, feature = "bot"))]
 pub mod bot;
 
 /// Crate version, reported by the contract's `core_version` view.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-/// FNV-1a 64 of this file, computed by build.rs. Changes whenever the rules change.
+/// sha256 of `rules.rs` (all the numbers), computed by build.rs.
 pub const RULES_HASH: &str = env!("LS_CORE_RULES_HASH");
+/// sha256 of `lib.rs` followed by `rules.rs` (numbers and engine), computed by build.rs.
+pub const CORE_HASH: &str = env!("LS_CORE_CORE_HASH");
 
-pub const W: i32 = 32;
-pub const H: i32 = 32;
 const CELLS: usize = (W * H) as usize;
 
 pub const WALL: u8 = 0;
 pub const FLOOR: u8 = 1;
 pub const STAIRS: u8 = 2;
-
-pub const MONSTERS_PER_LEVEL: usize = 8;
-const ITEMS_PER_LEVEL: u32 = 6;
-const ROOM_ATTEMPTS: u32 = 14;
-const BASE_HP: i32 = 20;
-const REGEN_EVERY: u32 = 5;
-const RESPAWN_EVERY: u32 = 25;
-const MONSTER_MIN_DIST: i32 = 6;
-const RESPAWN_MIN_DIST: i32 = 8;
-/// Depth beyond which monsters stop getting stronger (keeps i32 math far from overflow).
-const DEPTH_CAP: u32 = 1000;
 
 pub type ItemId = u32;
 
@@ -72,7 +67,7 @@ pub const MOVE_UP: u8 = 0;
 pub const MOVE_DOWN: u8 = 1;
 pub const MOVE_LEFT: u8 = 2;
 pub const MOVE_RIGHT: u8 = 3;
-/// Any byte other than 0..=3 is a wait. It still counts as a move.
+/// Wait one turn. Any byte without a meaning of its own is a wait; it still counts as a move.
 pub const MOVE_WAIT: u8 = 4;
 
 fn move_delta(mv: u8) -> (i32, i32) {
@@ -133,10 +128,11 @@ impl Rng {
 // Public data
 // ---------------------------------------------------------------------------------------------
 
-/// Items left at a depth by a player who died there.
+/// Items left at a depth by a player who died there. `id` is assigned by the contract.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Grave {
+    pub id: u32,
     pub depth: u32,
     pub x: u8,
     pub y: u8,
@@ -148,10 +144,25 @@ pub struct Grave {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DiveEntry {
     pub start_depth: u32,
-    /// Items the player carries into the dive (their token balances).
+    /// Items the player carries into the dive (the locked loadout).
     pub inventory: Vec<(ItemId, u32)>,
-    /// Graves currently on the server. `DiveOutcome::looted_graves` indexes into this list.
+    /// Graves the dive may meet, of any depths, in the order the contract stores them per depth.
+    /// `DiveSim::new` reads the ones of a depth when the dive enters it. The contract leaves this
+    /// empty and feeds graves through a [`GraveSource`] instead.
     pub graves: Vec<Grave>,
+}
+
+/// Graves of one depth, read once when a dive enters that depth.
+pub trait GraveSource {
+    /// The graves currently at `depth`, in a fixed order (the order matters to the outcome).
+    fn graves_at(&mut self, depth: u32) -> Vec<Grave>;
+}
+
+/// A preloaded list is a source: it yields the graves of the requested depth, in list order.
+impl GraveSource for &[Grave] {
+    fn graves_at(&mut self, depth: u32) -> Vec<Grave> {
+        self.iter().filter(|g| g.depth == depth).cloned().collect()
+    }
 }
 
 /// What the contract must apply after the dive.
@@ -160,20 +171,121 @@ pub struct DiveEntry {
 pub struct DiveOutcome {
     pub final_depth: u32,
     pub died: bool,
-    /// Moves processed before the dive ended (moves after death are ignored).
+    /// Moves processed before the dive ended (moves after death or past `MAX_MOVES` are ignored).
     pub moves_applied: u32,
     /// New items found in the dungeon (floor and monster drops): minted to the player.
     pub picked: Vec<(ItemId, u32)>,
-    /// Indexes into `DiveEntry::graves` the player emptied: moved to the player.
+    /// Ids of the graves the player emptied: their items move to the player.
     pub looted_graves: Vec<u32>,
-    /// On death: what the player carried, minus the death toll. Becomes a new grave.
+    /// On death: what the player carried at the end, minus the death toll. Becomes a new grave.
     pub dropped_into_grave: Vec<(ItemId, u32)>,
-    /// On death: the death toll (one gold in ten). Burned.
+    /// Burned from the player: items used up or broken during the dive and, on death, the toll.
     pub burned: Vec<(ItemId, u32)>,
     /// Where the player died (the new grave's position), if they died.
     pub death_pos: Option<(u8, u8)>,
     pub hp_left: u32,
     pub kills: u32,
+    pub blades_broken: u32,
+    pub potions_used: u32,
+    pub keys_used: u32,
+    pub vault_opened: bool,
+}
+
+/// One thing that happened during a step, for the browser to animate and explain.
+/// `monster` is the monster's index in `DiveView::monsters[].id` on the current depth.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "kind", rename_all = "snake_case"))]
+pub enum Event {
+    /// The player walked to (x, y).
+    Moved { x: i32, y: i32 },
+    /// The player walked into a wall at (x, y); nothing moved.
+    Bumped { x: i32, y: i32 },
+    /// The player hit a monster.
+    Attacked { monster: u32, damage: u32, killed: bool },
+    /// A killed monster dropped an item on its tile.
+    Dropped { x: i32, y: i32, item: ItemId, amount: u32 },
+    /// A monster hit the player.
+    Hurt { monster: u32, damage: u32 },
+    /// An adjacent monster missed.
+    Missed { monster: u32 },
+    /// The player picked an item up from the floor (it will be minted).
+    Picked { item: ItemId, amount: u32 },
+    /// The player emptied a grave.
+    GraveLooted { grave_id: u32 },
+    /// The wielded blade broke (it will be burned).
+    BladeBroke,
+    /// The player drank a potion.
+    PotionDrunk { healed: u32 },
+    /// The player opened a locked door with a key (the key will be burned).
+    DoorOpened { x: i32, y: i32 },
+    /// The player walked into a locked door without a key.
+    DoorLocked { x: i32, y: i32 },
+    /// The player took the stairs; a new depth was generated.
+    Descended { depth: u32 },
+    /// The player regained 1 HP.
+    Regenerated,
+    /// A monster appeared at (x, y).
+    Spawned { monster: u32, x: i32, y: i32 },
+    /// The player died at (x, y).
+    Died { x: i32, y: i32 },
+}
+
+/// The result of one `DiveSim::step`.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct StepEvents {
+    /// False when the dive was already over: the move was ignored and nothing changed.
+    pub applied: bool,
+    pub events: Vec<Event>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct MonsterView {
+    /// Stable slot index on this depth (events refer to it); a respawn may reuse a dead slot.
+    pub id: u32,
+    pub x: i32,
+    pub y: i32,
+    pub hp: i32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct GraveMarker {
+    pub id: u32,
+    pub x: i32,
+    pub y: i32,
+    pub looted: bool,
+    pub items: Vec<(ItemId, u32)>,
+}
+
+/// Everything the browser needs to draw the current state of a dive.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct DiveView {
+    pub depth: u32,
+    pub turn: u32,
+    pub width: u32,
+    pub height: u32,
+    /// `width * height` tiles, row-major (`tiles[y * width + x]`): WALL, FLOOR, STAIRS, ...
+    pub tiles: Vec<u8>,
+    pub x: i32,
+    pub y: i32,
+    pub hp: i32,
+    pub max_hp: i32,
+    /// Live monsters only.
+    pub monsters: Vec<MonsterView>,
+    pub items: Vec<FloorItem>,
+    pub graves: Vec<GraveMarker>,
+    /// What the player carries right now (loadout + finds - used up).
+    pub inventory: Vec<(ItemId, u32)>,
+    /// Hits left on the wielded blade (0 when no blade is carried).
+    pub blade_durability: u32,
+    pub kills: u32,
+    pub moves_applied: u32,
+    pub over: bool,
+    pub died: bool,
 }
 
 /// Adds `amount` of `id` to a small item list, keeping first-insertion order.
@@ -188,7 +300,19 @@ pub fn add_item(list: &mut Vec<(ItemId, u32)>, id: ItemId, amount: u32) {
     }
 }
 
-fn count_item(list: &[(ItemId, u32)], id: ItemId) -> u32 {
+/// Removes up to `amount` of `id` from a list (entries that reach 0 are dropped); returns how
+/// many were removed.
+fn remove_item(list: &mut Vec<(ItemId, u32)>, id: ItemId, amount: u32) -> u32 {
+    let Some(i) = list.iter().position(|e| e.0 == id) else { return 0 };
+    let taken = list[i].1.min(amount);
+    list[i].1 -= taken;
+    if list[i].1 == 0 {
+        list.remove(i);
+    }
+    taken
+}
+
+pub fn count_item(list: &[(ItemId, u32)], id: ItemId) -> u32 {
     list.iter().filter(|e| e.0 == id).map(|e| e.1).fold(0u32, u32::saturating_add)
 }
 
@@ -205,6 +329,7 @@ pub struct Monster {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FloorItem {
     pub x: i32,
     pub y: i32,
@@ -216,8 +341,8 @@ pub struct FloorItem {
 pub struct GraveSpot {
     pub x: i32,
     pub y: i32,
-    /// Index into `DiveEntry::graves`.
-    pub index: u32,
+    pub id: u32,
+    pub items: Vec<(ItemId, u32)>,
     pub looted: bool,
 }
 
@@ -258,14 +383,6 @@ fn set_tile(tiles: &mut [u8; CELLS], x: i32, y: i32, t: u8) {
     if x >= 0 && y >= 0 && x < W && y < H {
         tiles[(y * W + x) as usize] = t;
     }
-}
-
-fn depth_factor(depth: u32) -> i32 {
-    depth.min(DEPTH_CAP) as i32
-}
-
-fn monster_hp(depth: u32) -> i32 {
-    3 + depth_factor(depth) / 2
 }
 
 /// Random passable tile; falls back to the first passable tile in scan order.
@@ -310,9 +427,9 @@ fn free_spot(
     None
 }
 
-/// The given cell if passable, otherwise the nearest passable cell (ring by ring, fixed order).
+/// The given cell if it is floor, otherwise the nearest floor cell (ring by ring, fixed order).
 fn snap_to_floor(tiles: &[u8; CELLS], x: i32, y: i32) -> (i32, i32) {
-    if tile_at(tiles, x, y) != WALL {
+    if tile_at(tiles, x, y) == FLOOR {
         return (x, y);
     }
     for r in 1..W.max(H) {
@@ -321,7 +438,7 @@ fn snap_to_floor(tiles: &[u8; CELLS], x: i32, y: i32) -> (i32, i32) {
                 if dx.abs() != r && dy.abs() != r {
                     continue;
                 }
-                if tile_at(tiles, x + dx, y + dy) != WALL {
+                if tile_at(tiles, x + dx, y + dy) == FLOOR {
                     return (x + dx, y + dy);
                 }
             }
@@ -335,16 +452,17 @@ fn level_rng(seed: u64, depth: u32) -> Rng {
 }
 
 /// Builds the map of `depth` for `seed`. Same `(seed, depth)` gives the same map for every
-/// player, which is what lets a grave written by one dive be found by another.
+/// player, which is what lets a grave written by one dive be found by another. Graves of other
+/// depths in `graves` are ignored.
 pub fn generate_level(seed: u64, depth: u32, graves: &[Grave]) -> Level {
     let mut rng = level_rng(seed, depth);
     let mut tiles = [WALL; CELLS];
     // (x, y, w, h)
     let mut rooms: Vec<(i32, i32, i32, i32)> = Vec::new();
 
-    for _ in 0..ROOM_ATTEMPTS {
-        let w = 4 + rng.below(6) as i32;
-        let h = 3 + rng.below(5) as i32;
+    for _ in 0..rules::ROOM_ATTEMPTS {
+        let w = rules::ROOM_W_MIN + rng.below(rules::ROOM_W_SPREAD) as i32;
+        let h = rules::ROOM_H_MIN + rng.below(rules::ROOM_H_SPREAD) as i32;
         let x = 1 + rng.below((W - w - 1) as u32) as i32;
         let y = 1 + rng.below((H - h - 1) as u32) as i32;
         let overlaps = rooms.iter().any(|&(rx, ry, rw, rh)| {
@@ -381,30 +499,28 @@ pub fn generate_level(seed: u64, depth: u32, graves: &[Grave]) -> Level {
     set_tile(&mut tiles, stairs.0, stairs.1, STAIRS);
 
     let mut grave_spots = Vec::new();
-    for (i, g) in graves.iter().enumerate() {
-        if g.depth == depth {
-            let (gx, gy) = snap_to_floor(&tiles, i32::from(g.x), i32::from(g.y));
-            grave_spots.push(GraveSpot { x: gx, y: gy, index: i as u32, looted: false });
-        }
+    for g in graves.iter().filter(|g| g.depth == depth) {
+        let (gx, gy) = snap_to_floor(&tiles, i32::from(g.x), i32::from(g.y));
+        grave_spots.push(GraveSpot { x: gx, y: gy, id: g.id, items: g.items.clone(), looted: false });
     }
 
-    let mut monsters = Vec::with_capacity(MONSTERS_PER_LEVEL);
-    for _ in 0..MONSTERS_PER_LEVEL {
-        if let Some((mx, my)) = free_spot(&tiles, &monsters, &mut rng, start, MONSTER_MIN_DIST) {
-            monsters.push(Monster { x: mx, y: my, hp: monster_hp(depth), alive: true });
+    let mut monsters = Vec::with_capacity(rules::MONSTERS_PER_LEVEL);
+    for _ in 0..rules::MONSTERS_PER_LEVEL {
+        if let Some((mx, my)) = free_spot(&tiles, &monsters, &mut rng, start, rules::MONSTER_MIN_DIST) {
+            monsters.push(Monster { x: mx, y: my, hp: rules::monster_hp(depth), alive: true });
         }
     }
 
     let mut items = Vec::new();
-    let d = depth_factor(depth) as u32;
-    for _ in 0..ITEMS_PER_LEVEL {
+    let d = depth.min(rules::DEPTH_CAP);
+    for _ in 0..rules::ITEMS_PER_LEVEL {
         let (ix, iy) = random_floor(&tiles, &mut rng);
         let roll = rng.below(100);
-        let (item, amount) = if roll < 55 {
-            (ITEM_GOLD, 1 + rng.below(5) + d / 2)
-        } else if roll < 75 {
+        let (item, amount) = if roll < rules::DROP_GOLD_BELOW {
+            (ITEM_GOLD, 1 + rng.below(rules::FLOOR_GOLD_SPREAD) + d / 2)
+        } else if roll < rules::DROP_BLADE_BELOW {
             (ITEM_BLADE, 1)
-        } else if roll < 93 {
+        } else if roll < rules::DROP_PLATE_BELOW {
             (ITEM_PLATE, 1)
         } else {
             (ITEM_GEM, 1)
@@ -436,40 +552,60 @@ fn carve_line(tiles: &mut [u8; CELLS], from: (i32, i32), to: (i32, i32)) {
 // The dive
 // ---------------------------------------------------------------------------------------------
 
-/// Step-by-step dive state. `run_dive` is the contract's entry point; the stepper is public so
-/// the browser (and the test bot) can play one move at a time with exactly the same rules.
+/// Step-by-step dive. The browser calls `step` once per key press; the contract's `run_dive`
+/// is the same `step` loop over the whole log, so both always agree.
 #[derive(Clone, Debug)]
-pub struct Dive<'a> {
+pub struct DiveSim {
     seed: u64,
-    entry: &'a DiveEntry,
-    pub level: Level,
-    pub depth: u32,
-    pub x: i32,
-    pub y: i32,
-    pub hp: i32,
+    /// Graves handed in through `DiveEntry::graves` (read lazily per depth by `step`).
+    preloaded: Vec<Grave>,
+    level: Level,
+    depth: u32,
+    x: i32,
+    y: i32,
+    hp: i32,
     carried: Vec<(ItemId, u32)>,
     picked: Vec<(ItemId, u32)>,
     looted: Vec<u32>,
+    burned: Vec<(ItemId, u32)>,
     rng: Rng,
-    pub turn: u32,
+    turn: u32,
     died: bool,
     death_pos: Option<(u8, u8)>,
     moves_applied: u32,
     kills: u32,
+    blade_wear: u32,
+    blades_broken: u32,
+    potions_used: u32,
+    keys_used: u32,
+    vault_opened: bool,
+    /// When set (by `run_dive`), steps do not record events: same rules, less work on chain.
+    quiet: bool,
+    events: Vec<Event>,
 }
 
-impl<'a> Dive<'a> {
-    pub fn new(seed: u64, entry: &'a DiveEntry) -> Self {
+impl DiveSim {
+    /// Starts a dive whose graves come from `entry.graves`.
+    pub fn new(seed: u64, entry: &DiveEntry) -> DiveSim {
+        let mut src: &[Grave] = &entry.graves;
+        let mut sim = DiveSim::with_source(seed, entry, &mut src);
+        sim.preloaded = entry.graves.clone();
+        sim
+    }
+
+    /// Starts a dive whose graves come from `src` (`entry.graves` is ignored). Use `step_with`
+    /// with the same source afterwards.
+    pub fn with_source(seed: u64, entry: &DiveEntry, src: &mut impl GraveSource) -> DiveSim {
         let depth = entry.start_depth.max(1);
-        let level = generate_level(seed, depth, &entry.graves);
+        let level = generate_level(seed, depth, &src.graves_at(depth));
         let mut carried = Vec::new();
         for &(id, amount) in &entry.inventory {
             add_item(&mut carried, id, amount);
         }
         let (x, y) = level.start;
-        let mut dive = Dive {
+        let mut sim = DiveSim {
             seed,
-            entry,
+            preloaded: Vec::new(),
             level,
             depth,
             x,
@@ -478,37 +614,47 @@ impl<'a> Dive<'a> {
             carried,
             picked: Vec::new(),
             looted: Vec::new(),
+            burned: Vec::new(),
             rng: Rng::new(seed ^ 0xA076_1D64_78BD_642F),
             turn: 0,
             died: false,
             death_pos: None,
             moves_applied: 0,
             kills: 0,
+            blade_wear: 0,
+            blades_broken: 0,
+            potions_used: 0,
+            keys_used: 0,
+            vault_opened: false,
+            quiet: false,
+            events: Vec::new(),
         };
-        dive.hp = dive.max_hp();
-        dive
+        sim.hp = sim.max_hp();
+        sim
+    }
+
+    /// True once the player is dead or `MAX_MOVES` moves were applied; further steps are ignored.
+    pub fn is_over(&self) -> bool {
+        self.died || self.moves_applied >= MAX_MOVES
     }
 
     pub fn is_dead(&self) -> bool {
         self.died
     }
 
-    pub fn max_hp(&self) -> i32 {
-        BASE_HP + 2 * count_item(&self.carried, ITEM_GEM).min(5) as i32
+    /// Applies one move, reading new depths' graves from `DiveEntry::graves`.
+    pub fn step(&mut self, mv: u8) -> StepEvents {
+        let pre = core::mem::take(&mut self.preloaded);
+        let mut src: &[Grave] = &pre;
+        let out = self.step_with(mv, &mut src);
+        self.preloaded = pre;
+        out
     }
 
-    fn attack_bonus(&self) -> i32 {
-        count_item(&self.carried, ITEM_BLADE).min(3) as i32
-    }
-
-    fn armor(&self) -> i32 {
-        count_item(&self.carried, ITEM_PLATE).min(2) as i32
-    }
-
-    /// Applies one move. Returns false (and does nothing) once the player is dead.
-    pub fn step(&mut self, mv: u8) -> bool {
-        if self.died {
-            return false;
+    /// Applies one move, reading new depths' graves from `src`.
+    pub fn step_with(&mut self, mv: u8, src: &mut impl GraveSource) -> StepEvents {
+        if self.is_over() {
+            return StepEvents { applied: false, events: Vec::new() };
         }
         self.moves_applied += 1;
         self.turn += 1;
@@ -521,34 +667,64 @@ impl<'a> Dive<'a> {
             } else if self.level.passable(nx, ny) {
                 self.x = nx;
                 self.y = ny;
+                self.emit(Event::Moved { x: nx, y: ny });
                 self.pick_up();
                 if self.level.tile(nx, ny) == STAIRS {
-                    self.descend();
+                    self.descend(src);
                     self.end_of_turn();
-                    return true;
+                    return self.take_events();
                 }
+            } else {
+                // Into a wall: no-op, the move still counts.
+                self.emit(Event::Bumped { x: nx, y: ny });
             }
-            // Into a wall: no-op, the move still counts.
         }
 
         self.monsters_act();
         if !self.died {
             self.end_of_turn();
         }
-        true
+        self.take_events()
+    }
+
+    fn emit(&mut self, e: Event) {
+        if !self.quiet {
+            self.events.push(e);
+        }
+    }
+
+    fn take_events(&mut self) -> StepEvents {
+        StepEvents { applied: true, events: core::mem::take(&mut self.events) }
+    }
+
+    pub fn max_hp(&self) -> i32 {
+        rules::BASE_HP + rules::GEM_HP * count_item(&self.carried, ITEM_GEM).min(rules::GEM_CAP) as i32
+    }
+
+    fn attack_bonus(&self) -> i32 {
+        rules::BLADE_ATTACK * count_item(&self.carried, ITEM_BLADE).min(rules::BLADE_CAP) as i32
+    }
+
+    fn armor(&self) -> i32 {
+        rules::PLATE_ARMOR * count_item(&self.carried, ITEM_PLATE).min(rules::PLATE_CAP) as i32
     }
 
     fn player_attack(&mut self, i: usize) {
-        let dmg = 1 + self.rng.below(4) as i32 + self.attack_bonus();
+        let dmg = 1 + self.rng.below(rules::PLAYER_DAMAGE_SPREAD) as i32 + self.attack_bonus();
         let m = &mut self.level.monsters[i];
         m.hp -= dmg;
-        if m.hp <= 0 {
+        let killed = m.hp <= 0;
+        let (mx, my) = (m.x, m.y);
+        if killed {
             m.alive = false;
-            let (mx, my) = (m.x, m.y);
+        }
+        self.emit(Event::Attacked { monster: i as u32, damage: dmg as u32, killed });
+        if killed {
             self.kills += 1;
-            if self.rng.below(2) == 0 {
-                let amount = 1 + self.rng.below(3);
+            if self.rng.below(100) < rules::MONSTER_GOLD_DROP_PCT {
+                let amount = 1 + self.rng.below(rules::MONSTER_GOLD_SPREAD);
                 self.level.items.push(FloorItem { x: mx, y: my, item: ITEM_GOLD, amount });
+                self.emit(Event::Dropped { x: mx, y: my, item: ITEM_GOLD, amount });
             }
         }
     }
@@ -561,49 +737,57 @@ impl<'a> Dive<'a> {
                 let it = self.level.items.remove(i);
                 add_item(&mut self.carried, it.item, it.amount);
                 add_item(&mut self.picked, it.item, it.amount);
+                self.emit(Event::Picked { item: it.item, amount: it.amount });
             } else {
                 i += 1;
             }
         }
         for gi in 0..self.level.graves.len() {
-            let spot = &self.level.graves[gi];
+            let spot = &mut self.level.graves[gi];
             if spot.looted || spot.x != self.x || spot.y != self.y {
                 continue;
             }
-            let index = spot.index;
-            self.level.graves[gi].looted = true;
-            self.looted.push(index);
-            for &(id, amount) in &self.entry.graves[index as usize].items {
-                add_item(&mut self.carried, id, amount);
+            spot.looted = true;
+            let id = spot.id;
+            let items = spot.items.clone();
+            self.looted.push(id);
+            for (item, amount) in items {
+                add_item(&mut self.carried, item, amount);
             }
+            self.emit(Event::GraveLooted { grave_id: id });
         }
     }
 
-    fn descend(&mut self) {
+    fn descend(&mut self, src: &mut impl GraveSource) {
         self.depth += 1;
-        self.level = generate_level(self.seed, self.depth, &self.entry.graves);
+        self.level = generate_level(self.seed, self.depth, &src.graves_at(self.depth));
         self.x = self.level.start.0;
         self.y = self.level.start.1;
+        self.emit(Event::Descended { depth: self.depth });
     }
 
     fn monsters_act(&mut self) {
-        let d = depth_factor(self.depth);
         for i in 0..self.level.monsters.len() {
             let m = &self.level.monsters[i];
             if !m.alive {
                 continue;
             }
             if (m.x - self.x).abs() + (m.y - self.y).abs() == 1 {
-                if self.rng.below(100) < 60 {
+                if self.rng.below(100) < rules::MONSTER_HIT_PCT {
                     // Armor softens a hit but every hit does at least 1 damage.
-                    let raw = 1 + self.rng.below(2 + (d / 6) as u32) as i32;
-                    self.hp -= (raw - self.armor()).max(1);
+                    let raw = 1 + self.rng.below(rules::monster_damage_spread(self.depth)) as i32;
+                    let dmg = (raw - self.armor()).max(1);
+                    self.hp -= dmg;
+                    self.emit(Event::Hurt { monster: i as u32, damage: dmg as u32 });
                     if self.hp <= 0 {
                         self.hp = 0;
                         self.died = true;
                         self.death_pos = Some((self.x as u8, self.y as u8));
+                        self.emit(Event::Died { x: self.x, y: self.y });
                         return;
                     }
+                } else {
+                    self.emit(Event::Missed { monster: i as u32 });
                 }
             } else {
                 self.monster_step(i);
@@ -638,17 +822,18 @@ impl<'a> Dive<'a> {
     }
 
     fn end_of_turn(&mut self) {
-        if self.turn % REGEN_EVERY == 0 && self.hp < self.max_hp() {
+        if self.turn % rules::REGEN_EVERY == 0 && self.hp < self.max_hp() {
             self.hp += 1;
+            self.emit(Event::Regenerated);
         }
-        if self.turn % RESPAWN_EVERY == 0 {
+        if self.turn % rules::RESPAWN_EVERY == 0 {
             self.respawn();
         }
     }
 
     fn respawn(&mut self) {
         let alive = self.level.monsters.iter().filter(|m| m.alive).count();
-        if alive >= MONSTERS_PER_LEVEL {
+        if alive >= rules::MONSTERS_PER_LEVEL {
             return;
         }
         let spot = free_spot(
@@ -656,24 +841,64 @@ impl<'a> Dive<'a> {
             &self.level.monsters,
             &mut self.rng,
             (self.x, self.y),
-            RESPAWN_MIN_DIST,
+            rules::RESPAWN_MIN_DIST,
         );
         if let Some((x, y)) = spot {
-            let m = Monster { x, y, hp: monster_hp(self.depth), alive: true };
-            if let Some(slot) = self.level.monsters.iter_mut().find(|m| !m.alive) {
-                *slot = m;
+            let m = Monster { x, y, hp: rules::monster_hp(self.depth), alive: true };
+            let slot = if let Some(slot) = self.level.monsters.iter().position(|m| !m.alive) {
+                self.level.monsters[slot] = m;
+                slot
             } else {
                 self.level.monsters.push(m);
-            }
+                self.level.monsters.len() - 1
+            };
+            self.emit(Event::Spawned { monster: slot as u32, x, y });
         }
     }
 
-    pub fn finish(self) -> DiveOutcome {
+    /// The current state, for drawing.
+    pub fn view(&self) -> DiveView {
+        DiveView {
+            depth: self.depth,
+            turn: self.turn,
+            width: W as u32,
+            height: H as u32,
+            tiles: self.level.tiles.to_vec(),
+            x: self.x,
+            y: self.y,
+            hp: self.hp,
+            max_hp: self.max_hp(),
+            monsters: self
+                .level
+                .monsters
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.alive)
+                .map(|(i, m)| MonsterView { id: i as u32, x: m.x, y: m.y, hp: m.hp })
+                .collect(),
+            items: self.level.items.clone(),
+            graves: self
+                .level
+                .graves
+                .iter()
+                .map(|g| GraveMarker { id: g.id, x: g.x, y: g.y, looted: g.looted, items: g.items.clone() })
+                .collect(),
+            inventory: self.carried.clone(),
+            blade_durability: 0,
+            kills: self.kills,
+            moves_applied: self.moves_applied,
+            over: self.is_over(),
+            died: self.died,
+        }
+    }
+
+    /// What the contract would apply if the dive ended now (the log ends here, or it is over).
+    pub fn outcome(&self) -> DiveOutcome {
         let mut dropped = Vec::new();
-        let mut burned = Vec::new();
+        let mut burned = self.burned.clone();
         if self.died {
             for &(id, amount) in &self.carried {
-                let toll = if id == ITEM_GOLD { amount / 10 } else { 0 };
+                let toll = if id == ITEM_GOLD { amount / rules::DEATH_TOLL_GOLD_DIV } else { 0 };
                 add_item(&mut burned, id, toll);
                 add_item(&mut dropped, id, amount - toll);
             }
@@ -682,26 +907,37 @@ impl<'a> Dive<'a> {
             final_depth: self.depth,
             died: self.died,
             moves_applied: self.moves_applied,
-            picked: self.picked,
-            looted_graves: self.looted,
+            picked: self.picked.clone(),
+            looted_graves: self.looted.clone(),
             dropped_into_grave: dropped,
             burned,
             death_pos: self.death_pos,
             hp_left: self.hp.max(0) as u32,
             kills: self.kills,
+            blades_broken: self.blades_broken,
+            potions_used: self.potions_used,
+            keys_used: self.keys_used,
+            vault_opened: self.vault_opened,
         }
     }
 }
 
-/// Re-runs a whole dive. This is what the contract executes on `settle_dive`.
+/// Re-runs a whole dive with graves from `entry.graves`: the `DiveSim::step` loop.
 pub fn run_dive(seed: u64, entry: &DiveEntry, moves: &[u8]) -> DiveOutcome {
-    let mut dive = Dive::new(seed, entry);
+    let mut src: &[Grave] = &entry.graves;
+    run_dive_with(seed, entry, moves, &mut src)
+}
+
+/// Re-runs a whole dive with graves from `src`: what the contract executes on `settle_dive`.
+pub fn run_dive_with(seed: u64, entry: &DiveEntry, moves: &[u8], src: &mut impl GraveSource) -> DiveOutcome {
+    let mut sim = DiveSim::with_source(seed, entry, src);
+    sim.quiet = true;
     for &mv in moves {
-        if !dive.step(mv) {
+        if !sim.step_with(mv, src).applied {
             break;
         }
     }
-    dive.finish()
+    sim.outcome()
 }
 
 #[cfg(test)]
