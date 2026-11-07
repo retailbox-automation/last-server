@@ -182,15 +182,21 @@ fn random_case(rng: &mut Rng, i: u32) -> (u64, DiveEntry, Vec<u8>) {
     let graves = (0..rng.below(6))
         .map(|g| Grave {
             id: g,
-            depth: 1 + rng.below(3),
+            depth: 1 + rng.below(9),
             x: rng.below(32) as u8,
             y: rng.below(32) as u8,
             items: vec![(ITEM_GOLD, 1 + rng.below(9)), (ITEM_BLADE, rng.below(2))],
         })
         .collect();
     let entry = DiveEntry {
-        start_depth: 1 + rng.below(3),
-        inventory: vec![(ITEM_GOLD, rng.below(50)), (ITEM_BLADE, rng.below(3)), (ITEM_PLATE, rng.below(2))],
+        start_depth: 1 + rng.below(8),
+        inventory: vec![
+            (ITEM_GOLD, rng.below(50)),
+            (ITEM_BLADE, rng.below(3)),
+            (ITEM_PLATE, rng.below(2)),
+            (ITEM_POTION, rng.below(3)),
+            (ITEM_BLUE_KEY, rng.below(2)),
+        ],
         graves,
     };
     (u64::from(i).wrapping_mul(0x9E37_79B9) ^ rng.next_u64(), entry, moves)
@@ -322,4 +328,263 @@ fn types_round_trip_through_json() {
     assert_eq!(serde_json::from_str::<DiveOutcome>(&serde_json::to_string(&o).unwrap()).unwrap(), o);
     let e = serde_json::to_value(&Event::Attacked { monster: 2, damage: 3, killed: true }).unwrap();
     assert_eq!(e, serde_json::json!({"kind": "attacked", "monster": 2, "damage": 3, "killed": true}));
+}
+
+/// Cells reachable from the level start through passable tiles (a closed door blocks).
+fn reachable(l: &Level) -> std::vec::Vec<bool> {
+    let mut seen = vec![false; (W * H) as usize];
+    let mut queue = vec![l.start];
+    seen[(l.start.1 * W + l.start.0) as usize] = true;
+    while let Some((x, y)) = queue.pop() {
+        for (dx, dy) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
+            let (nx, ny) = (x + dx, y + dy);
+            if l.passable(nx, ny) && !seen[(ny * W + nx) as usize] {
+                seen[(ny * W + nx) as usize] = true;
+                queue.push((nx, ny));
+            }
+        }
+    }
+    seen
+}
+
+#[test]
+fn one_vault_at_depth_7_behind_the_blue_door() {
+    for seed in 0..2000u64 {
+        let l = generate_level(seed, rules::VAULT_DEPTH, &[]);
+        let doors: std::vec::Vec<usize> = (0..l.tiles.len()).filter(|&i| l.tiles[i] == DOOR_BLUE).collect();
+        assert_eq!(doors.len(), 1, "seed {seed}");
+        let (dx, dy) = l.door.expect("door");
+        assert_eq!(doors[0], (dy * W + dx) as usize);
+        let gems: std::vec::Vec<&FloorItem> = l.items.iter().filter(|i| i.item == ITEM_GEM).collect();
+        assert_eq!(gems.len(), 1, "seed {seed}");
+        assert_eq!(gems[0].amount, rules::VAULT_GEMS);
+        // Closed door: the gem is out of reach; open door: the gem and the stairs are reachable.
+        let closed = reachable(&l);
+        assert!(!closed[(gems[0].y * W + gems[0].x) as usize], "seed {seed}: gem reachable without the key");
+        assert!(closed[(l.stairs.1 * W + l.stairs.0) as usize], "seed {seed}: stairs cut off");
+        let mut open = l.clone();
+        open.tiles[doors[0]] = FLOOR;
+        assert!(reachable(&open)[(gems[0].y * W + gems[0].x) as usize], "seed {seed}: vault sealed");
+    }
+}
+
+#[test]
+fn keys_deep_gems_only_in_the_vault() {
+    let mut keys_by_depth = [0u32; 13];
+    for seed in 0..300u64 {
+        for depth in 1..=12u32 {
+            let l = generate_level(seed, depth, &[]);
+            if depth != rules::VAULT_DEPTH {
+                assert!(l.door.is_none());
+                assert!(l.tiles.iter().all(|&t| t != DOOR_BLUE));
+                assert!(l.items.iter().all(|i| i.item != ITEM_GEM), "seed {seed} depth {depth}: gem on the floor");
+            }
+            for it in &l.items {
+                assert!(ITEM_IDS.contains(&it.item));
+                if it.item == ITEM_BLUE_KEY {
+                    keys_by_depth[depth as usize] += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(&keys_by_depth[1..5], &[0, 0, 0, 0], "keys above depth 5");
+    assert!(keys_by_depth[5..].iter().all(|&k| k > 0), "{keys_by_depth:?}");
+}
+
+/// A sim with no monsters except, optionally, one sturdy monster east of the player.
+fn quiet_sim(entry: &DiveEntry) -> DiveSim {
+    let mut sim = DiveSim::new(11, entry);
+    sim.level.monsters.clear();
+    sim
+}
+
+#[test]
+fn blade_breaks_after_its_durability_and_is_burned() {
+    let entry = DiveEntry { start_depth: 1, inventory: vec![(ITEM_BLADE, 2)], graves: vec![] };
+    let mut sim = quiet_sim(&entry);
+    sim.hp = 1_000_000;
+    // Put a monster that cannot die in a free cell next to the player.
+    let (mx, my) = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        .into_iter()
+        .map(|(dx, dy)| (sim.x + dx, sim.y + dy))
+        .find(|&(x, y)| sim.level.passable(x, y))
+        .unwrap();
+    let mv = match (mx - sim.x, my - sim.y) {
+        (1, 0) => MOVE_RIGHT,
+        (-1, 0) => MOVE_LEFT,
+        (0, 1) => MOVE_DOWN,
+        _ => MOVE_UP,
+    };
+    sim.level.monsters.push(Monster { x: mx, y: my, hp: 1_000_000, alive: true });
+    assert_eq!(sim.view().blade_durability, rules::BLADE_DURABILITY);
+    for hit in 1..=rules::BLADE_DURABILITY {
+        let ev = sim.step(mv);
+        let broke = ev.events.contains(&Event::BladeBroke);
+        assert_eq!(broke, hit == rules::BLADE_DURABILITY, "hit {hit}");
+    }
+    // One blade left, fresh; the broken one is burned.
+    assert_eq!(count_item(&sim.carried, ITEM_BLADE), 1);
+    assert_eq!(sim.view().blade_durability, rules::BLADE_DURABILITY);
+    let out = sim.outcome();
+    assert_eq!(out.blades_broken, 1);
+    assert_eq!(out.burned, vec![(ITEM_BLADE, 1)]);
+    for _ in 0..rules::BLADE_DURABILITY {
+        sim.step(mv);
+    }
+    assert_eq!(sim.view().blade_durability, 0);
+    assert_eq!(sim.outcome().burned, vec![(ITEM_BLADE, 2)]);
+    assert!(sim.view().inventory.iter().all(|e| e.0 != ITEM_BLADE));
+}
+
+#[test]
+fn potion_heals_only_when_hurt_and_is_used_up() {
+    let entry = DiveEntry { start_depth: 1, inventory: vec![(ITEM_POTION, 2)], graves: vec![] };
+    let mut sim = quiet_sim(&entry);
+    // Full HP: drinking is a wait.
+    let ev = sim.step(MOVE_POTION);
+    assert!(ev.applied && ev.events.is_empty());
+    assert_eq!(count_item(&sim.carried, ITEM_POTION), 2);
+    sim.hp = 3;
+    let ev = sim.step(MOVE_POTION);
+    assert_eq!(ev.events, vec![Event::PotionDrunk { healed: rules::POTION_HEAL as u32 }]);
+    assert_eq!(sim.hp, 3 + rules::POTION_HEAL);
+    sim.hp = sim.max_hp() - 2;
+    sim.step(MOVE_POTION);
+    assert_eq!(sim.hp, sim.max_hp(), "never above max");
+    sim.hp = 1;
+    let ev = sim.step(MOVE_POTION);
+    assert!(ev.events.iter().all(|e| !matches!(e, Event::PotionDrunk { .. })), "no potion left");
+    let out = sim.outcome();
+    assert_eq!(out.potions_used, 2);
+    assert_eq!(out.burned, vec![(ITEM_POTION, 2)]);
+}
+
+/// Puts the player on the corridor tile just outside the vault door; returns the move into it.
+fn stand_at_door(sim: &mut DiveSim) -> u8 {
+    let (dx, dy) = sim.level.door.expect("vault depth has a door");
+    for (mv, ox, oy) in [(MOVE_DOWN, 0, -1), (MOVE_UP, 0, 1), (MOVE_RIGHT, -1, 0), (MOVE_LEFT, 1, 0)] {
+        let (x, y) = (dx + ox, dy + oy);
+        if sim.level.passable(x, y) && reachable(&sim.level)[(y * W + x) as usize] {
+            sim.x = x;
+            sim.y = y;
+            return mv;
+        }
+    }
+    panic!("no corridor next to the door");
+}
+
+#[test]
+fn blue_key_opens_the_vault_and_the_gem_is_found() {
+    for seed in 0..50u64 {
+        // No key: the door stays shut and the player does not move.
+        let entry = DiveEntry { start_depth: rules::VAULT_DEPTH, inventory: vec![], graves: vec![] };
+        let mut sim = DiveSim::new(seed, &entry);
+        sim.level.monsters.clear();
+        let mv = stand_at_door(&mut sim);
+        let before = (sim.x, sim.y);
+        let ev = sim.step(mv);
+        assert!(ev.events.iter().any(|e| matches!(e, Event::DoorLocked { .. })), "seed {seed}");
+        assert_eq!((sim.x, sim.y), before);
+        assert!(!sim.outcome().vault_opened);
+
+        // With a key: the door opens, the key burns, the player walks in and takes the gem.
+        let entry = DiveEntry { start_depth: rules::VAULT_DEPTH, inventory: vec![(ITEM_BLUE_KEY, 1)], graves: vec![] };
+        let mut sim = DiveSim::new(seed, &entry);
+        sim.level.monsters.clear();
+        let mv = stand_at_door(&mut sim);
+        let ev = sim.step(mv);
+        assert!(ev.events.iter().any(|e| matches!(e, Event::DoorOpened { .. })), "seed {seed}");
+        assert_eq!((sim.x, sim.y), sim.level.door.unwrap());
+        let gem = sim.level.items.iter().find(|i| i.item == ITEM_GEM).unwrap().clone();
+        // Walk to the gem (straight in: the door is in the middle of a vault wall).
+        for _ in 0..rules::VAULT_SIZE {
+            if (sim.x, sim.y) == (gem.x, gem.y) {
+                break;
+            }
+            sim.step(mv);
+        }
+        let out = sim.outcome();
+        assert!(out.vault_opened && out.keys_used == 1, "seed {seed}");
+        assert_eq!(out.burned, vec![(ITEM_BLUE_KEY, 1)]);
+        // (A random floor item may also have landed inside the vault.)
+        assert_eq!(count_item(&out.picked, ITEM_GEM), rules::VAULT_GEMS, "seed {seed}: {:?}", out.picked);
+        assert_eq!(sim.max_hp(), rules::BASE_HP + rules::GEM_HP);
+    }
+}
+
+#[test]
+fn bots_carry_a_key_to_the_vault() {
+    let mut opened = 0;
+    let n = 40u64;
+    for seed in 0..n {
+        let entry = DiveEntry { start_depth: 1, inventory: vec![(ITEM_BLUE_KEY, 1), (ITEM_BLADE, 1)], graves: vec![] };
+        let moves = generate_moves(seed, &entry, 3000, Style::Survivor);
+        let out = run_dive(seed, &entry, &moves);
+        if out.vault_opened {
+            opened += 1;
+            assert!(count_item(&out.picked, ITEM_GEM) >= 1, "seed {seed}: opened but no gem");
+        }
+        assert!(out.keys_used <= 1 + count_item(&out.picked, ITEM_BLUE_KEY));
+    }
+    std::println!("vault opened in {opened}/{n} dives");
+    assert!(opened * 10 >= n * 8, "vault opened in only {opened}/{n} dives");
+}
+
+/// Nothing is burned or dropped that the player did not have: per item,
+/// loadout + picked + looted - burned is what is banked (alive) or exactly the grave (dead).
+#[test]
+fn every_item_is_accounted_for() {
+    let mut rng = Rng::new(0xACC0);
+    let mut cases = vec![];
+    for i in 0..300u32 {
+        cases.push(random_case(&mut rng, i));
+    }
+    for seed in 0..30u64 {
+        let entry = DiveEntry {
+            start_depth: 1,
+            inventory: vec![(ITEM_GOLD, 40), (ITEM_BLADE, 2), (ITEM_POTION, 2), (ITEM_BLUE_KEY, 1)],
+            graves: vec![],
+        };
+        for style in [Style::Survivor, Style::Rusher, Style::Doomed, Style::DieAt(4)] {
+            let moves = generate_moves(seed, &entry, 1500, style);
+            cases.push((seed, entry.clone(), moves));
+        }
+    }
+    let (mut died, mut broke, mut drank) = (0, 0, 0);
+    for (n, (seed, entry, moves)) in cases.iter().enumerate() {
+        let out = run_dive(*seed, entry, moves);
+        for id in ITEM_IDS {
+            let mut have = i64::from(count_item(&entry.inventory, id)) + i64::from(count_item(&out.picked, id));
+            for g in entry.graves.iter().filter(|g| out.looted_graves.contains(&g.id)) {
+                have += i64::from(count_item(&g.items, id));
+            }
+            let left = have - i64::from(count_item(&out.burned, id));
+            assert!(left >= 0, "case {n} item {id}: burned more than carried");
+            if out.died {
+                assert_eq!(left, i64::from(count_item(&out.dropped_into_grave, id)), "case {n} item {id}");
+            } else {
+                assert!(out.dropped_into_grave.is_empty());
+            }
+        }
+        assert_eq!(count_item(&out.burned, ITEM_BLADE), out.blades_broken, "case {n}");
+        assert_eq!(count_item(&out.burned, ITEM_POTION), out.potions_used, "case {n}");
+        assert_eq!(count_item(&out.burned, ITEM_BLUE_KEY), out.keys_used, "case {n}");
+        assert_eq!(out.vault_opened, out.keys_used > 0, "case {n}");
+        died += u32::from(out.died);
+        broke += out.blades_broken;
+        drank += out.potions_used;
+    }
+    std::println!("cases {}: died {died}, blades broken {broke}, potions drunk {drank}", cases.len());
+    assert!(died > 0 && broke > 0 && drank > 0, "the accounting paths were not all exercised");
+}
+
+#[test]
+fn expired_grave_spot_is_seeded_and_inside() {
+    let a = expired_grave_spot(5, 1);
+    assert_eq!(a, expired_grave_spot(5, 1));
+    assert_ne!(a, expired_grave_spot(5, 2));
+    for d in 0..500u64 {
+        let (x, y) = expired_grave_spot(d * 31, d);
+        assert!(x >= 1 && i32::from(x) < W - 1 && y >= 1 && i32::from(y) < H - 1);
+    }
 }

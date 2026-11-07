@@ -39,6 +39,9 @@ const CELLS: usize = (W * H) as usize;
 pub const WALL: u8 = 0;
 pub const FLOOR: u8 = 1;
 pub const STAIRS: u8 = 2;
+/// The vault door: a wall until the player walks into it carrying a blue key (the key is used
+/// up and the door becomes floor for the rest of the dive). Monsters never pass it.
+pub const DOOR_BLUE: u8 = 3;
 
 pub type ItemId = u32;
 
@@ -46,8 +49,10 @@ pub const ITEM_GOLD: ItemId = 1;
 pub const ITEM_BLADE: ItemId = 2;
 pub const ITEM_PLATE: ItemId = 3;
 pub const ITEM_GEM: ItemId = 4;
+pub const ITEM_POTION: ItemId = 5;
+pub const ITEM_BLUE_KEY: ItemId = 6;
 /// Every item kind the rules can produce. The contract exposes each as a NEP-245 token id.
-pub const ITEM_IDS: [ItemId; 4] = [ITEM_GOLD, ITEM_BLADE, ITEM_PLATE, ITEM_GEM];
+pub const ITEM_IDS: [ItemId; 6] = [ITEM_GOLD, ITEM_BLADE, ITEM_PLATE, ITEM_GEM, ITEM_POTION, ITEM_BLUE_KEY];
 
 pub fn item_name(id: ItemId) -> Option<&'static str> {
     match id {
@@ -55,6 +60,8 @@ pub fn item_name(id: ItemId) -> Option<&'static str> {
         ITEM_BLADE => Some("blade"),
         ITEM_PLATE => Some("plate"),
         ITEM_GEM => Some("gem"),
+        ITEM_POTION => Some("potion"),
+        ITEM_BLUE_KEY => Some("blue_key"),
         _ => None,
     }
 }
@@ -69,6 +76,8 @@ pub const MOVE_LEFT: u8 = 2;
 pub const MOVE_RIGHT: u8 = 3;
 /// Wait one turn. Any byte without a meaning of its own is a wait; it still counts as a move.
 pub const MOVE_WAIT: u8 = 4;
+/// Drink a potion (heals `rules::POTION_HEAL`). Without a potion, or at full HP, it is a wait.
+pub const MOVE_POTION: u8 = 5;
 
 fn move_delta(mv: u8) -> (i32, i32) {
     match mv {
@@ -355,6 +364,8 @@ pub struct Level {
     pub monsters: Vec<Monster>,
     pub items: Vec<FloorItem>,
     pub graves: Vec<GraveSpot>,
+    /// The vault door, on `rules::VAULT_DEPTH` only.
+    pub door: Option<(i32, i32)>,
 }
 
 impl Level {
@@ -362,8 +373,9 @@ impl Level {
         tile_at(&self.tiles, x, y)
     }
 
+    /// Floor or stairs (a closed door is not passable).
     pub fn passable(&self, x: i32, y: i32) -> bool {
-        self.tile(x, y) != WALL
+        matches!(self.tile(x, y), FLOOR | STAIRS)
     }
 
     pub fn monster_at(&self, x: i32, y: i32) -> Option<usize> {
@@ -498,6 +510,8 @@ pub fn generate_level(seed: u64, depth: u32, graves: &[Grave]) -> Level {
     };
     set_tile(&mut tiles, stairs.0, stairs.1, STAIRS);
 
+    let vault = if depth == rules::VAULT_DEPTH { carve_vault(&mut tiles, &mut rng) } else { None };
+
     let mut grave_spots = Vec::new();
     for g in graves.iter().filter(|g| g.depth == depth) {
         let (gx, gy) = snap_to_floor(&tiles, i32::from(g.x), i32::from(g.y));
@@ -513,24 +527,99 @@ pub fn generate_level(seed: u64, depth: u32, graves: &[Grave]) -> Level {
 
     let mut items = Vec::new();
     let d = depth.min(rules::DEPTH_CAP);
+    let allowed = || rules::FLOOR_DROPS.iter().filter(|row| row.2 <= depth);
+    let total: u32 = allowed().map(|row| row.1).sum();
     for _ in 0..rules::ITEMS_PER_LEVEL {
         let (ix, iy) = random_floor(&tiles, &mut rng);
-        let roll = rng.below(100);
-        let (item, amount) = if roll < rules::DROP_GOLD_BELOW {
-            (ITEM_GOLD, 1 + rng.below(rules::FLOOR_GOLD_SPREAD) + d / 2)
-        } else if roll < rules::DROP_BLADE_BELOW {
-            (ITEM_BLADE, 1)
-        } else if roll < rules::DROP_PLATE_BELOW {
-            (ITEM_PLATE, 1)
-        } else {
-            (ITEM_GEM, 1)
-        };
+        let mut roll = rng.below(total);
+        let mut item = ITEM_GOLD;
+        for &(id, weight, _) in allowed() {
+            if roll < weight {
+                item = id;
+                break;
+            }
+            roll -= weight;
+        }
+        let amount = if item == ITEM_GOLD { 1 + rng.below(rules::FLOOR_GOLD_SPREAD) + d / 2 } else { 1 };
         if (ix, iy) != start {
             items.push(FloorItem { x: ix, y: iy, item, amount });
         }
     }
+    let door = vault.map(|(door, (gx, gy))| {
+        items.push(FloorItem { x: gx, y: gy, item: ITEM_GEM, amount: rules::VAULT_GEMS });
+        door
+    });
 
-    Level { depth, tiles, start, stairs, monsters, items, graves: grave_spots }
+    Level { depth, tiles, start, stairs, monsters, items, graves: grave_spots, door }
+}
+
+/// Carves the vault into solid rock: a `VAULT_SIZE` square room whose wall ring stays intact
+/// except for one blue door, plus a straight corridor from the door to the nearest open tile.
+/// Returns (door, centre of the room). Tries every placement from a seeded starting point, so it
+/// only fails on a map with no solid `VAULT_SIZE + 2` block (never seen; see the tests).
+fn carve_vault(tiles: &mut [u8; CELLS], rng: &mut Rng) -> Option<((i32, i32), (i32, i32))> {
+    let s = rules::VAULT_SIZE;
+    let span = s + 2;
+    let (nx, ny) = (W - span + 1, H - span + 1);
+    let n = (nx * ny) as u32;
+    let first = rng.below(n);
+    let side0 = rng.below(4);
+    for k in 0..n {
+        let i = ((first + k) % n) as i32;
+        let (bx, by) = (i % nx, i / nx);
+        let solid = (by..by + span).all(|y| (bx..bx + span).all(|x| tile_at(tiles, x, y) == WALL));
+        if !solid {
+            continue;
+        }
+        let mid = s / 2 + 1;
+        // (door, outward step) for the top, right, bottom and left walls.
+        let sides = [
+            ((bx + mid, by), (0, -1)),
+            ((bx + span - 1, by + mid), (1, 0)),
+            ((bx + mid, by + span - 1), (0, 1)),
+            ((bx, by + mid), (-1, 0)),
+        ];
+        for j in 0..4u32 {
+            let ((dx, dy), (ox, oy)) = sides[((side0 + j) % 4) as usize];
+            if dx < 1 || dy < 1 || dx > W - 2 || dy > H - 2 {
+                continue;
+            }
+            // Walk outward through rock until an open tile; the map border stops the search.
+            let (mut cx, mut cy) = (dx + ox, dy + oy);
+            let mut len = 0;
+            let reached = loop {
+                if cx < 1 || cy < 1 || cx > W - 2 || cy > H - 2 {
+                    break false;
+                }
+                if tile_at(tiles, cx, cy) != WALL {
+                    break true;
+                }
+                cx += ox;
+                cy += oy;
+                len += 1;
+            };
+            if !reached {
+                continue;
+            }
+            for step in 1..=len {
+                set_tile(tiles, dx + ox * step, dy + oy * step, FLOOR);
+            }
+            for y in by + 1..by + 1 + s {
+                for x in bx + 1..bx + 1 + s {
+                    set_tile(tiles, x, y, FLOOR);
+                }
+            }
+            set_tile(tiles, dx, dy, DOOR_BLUE);
+            return Some(((dx, dy), (bx + mid, by + mid)));
+        }
+    }
+    None
+}
+
+/// Where the grave of an expired dive goes: a seeded spot (snapped to floor on each day's map).
+pub fn expired_grave_spot(seed: u64, dive_id: u64) -> (u8, u8) {
+    let mut rng = Rng::new(seed ^ dive_id.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x6578_7069_7265_6421);
+    ((1 + rng.below(W as u32 - 2)) as u8, (1 + rng.below(H as u32 - 2)) as u8)
 }
 
 /// Carves an axis-aligned segment (one of the two coordinates must match).
@@ -660,8 +749,13 @@ impl DiveSim {
         self.turn += 1;
 
         let (dx, dy) = move_delta(mv);
-        if dx != 0 || dy != 0 {
+        if mv == MOVE_POTION {
+            self.drink();
+        } else if dx != 0 || dy != 0 {
             let (nx, ny) = (self.x + dx, self.y + dy);
+            if self.level.tile(nx, ny) == DOOR_BLUE {
+                self.try_door(nx, ny);
+            }
             if let Some(i) = self.level.monster_at(nx, ny) {
                 self.player_attack(i);
             } else if self.level.passable(nx, ny) {
@@ -674,7 +768,7 @@ impl DiveSim {
                     self.end_of_turn();
                     return self.take_events();
                 }
-            } else {
+            } else if self.level.tile(nx, ny) != DOOR_BLUE {
                 // Into a wall: no-op, the move still counts.
                 self.emit(Event::Bumped { x: nx, y: ny });
             }
@@ -702,7 +796,53 @@ impl DiveSim {
     }
 
     fn attack_bonus(&self) -> i32 {
-        rules::BLADE_ATTACK * count_item(&self.carried, ITEM_BLADE).min(rules::BLADE_CAP) as i32
+        if count_item(&self.carried, ITEM_BLADE) > 0 {
+            rules::BLADE_ATTACK
+        } else {
+            0
+        }
+    }
+
+    /// Burns one carried `id` (used up or broken): it leaves the pack and goes to `burned`.
+    fn use_up(&mut self, id: ItemId) -> bool {
+        if remove_item(&mut self.carried, id, 1) == 1 {
+            add_item(&mut self.burned, id, 1);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn drink(&mut self) {
+        let max = self.max_hp();
+        if self.hp >= max || !self.use_up(ITEM_POTION) {
+            return;
+        }
+        let healed = rules::POTION_HEAL.min(max - self.hp);
+        self.hp += healed;
+        self.potions_used += 1;
+        self.emit(Event::PotionDrunk { healed: healed as u32 });
+    }
+
+    /// Walking into the vault door: a blue key opens it (and is used up), otherwise it is locked.
+    fn try_door(&mut self, x: i32, y: i32) {
+        if self.use_up(ITEM_BLUE_KEY) {
+            set_tile(&mut self.level.tiles, x, y, FLOOR);
+            self.keys_used += 1;
+            self.vault_opened = true;
+            self.emit(Event::DoorOpened { x, y });
+        } else {
+            self.emit(Event::DoorLocked { x, y });
+        }
+    }
+
+    /// Hits left on the wielded blade, 0 without a blade.
+    fn blade_durability(&self) -> u32 {
+        if count_item(&self.carried, ITEM_BLADE) > 0 {
+            rules::BLADE_DURABILITY - self.blade_wear
+        } else {
+            0
+        }
     }
 
     fn armor(&self) -> i32 {
@@ -711,6 +851,16 @@ impl DiveSim {
 
     fn player_attack(&mut self, i: usize) {
         let dmg = 1 + self.rng.below(rules::PLAYER_DAMAGE_SPREAD) as i32 + self.attack_bonus();
+        if count_item(&self.carried, ITEM_BLADE) > 0 {
+            self.blade_wear += 1;
+            if self.blade_wear >= rules::BLADE_DURABILITY {
+                // This hit still lands with the blade; then it breaks and the next one is drawn.
+                self.use_up(ITEM_BLADE);
+                self.blade_wear = 0;
+                self.blades_broken += 1;
+                self.emit(Event::BladeBroke);
+            }
+        }
         let m = &mut self.level.monsters[i];
         m.hp -= dmg;
         let killed = m.hp <= 0;
@@ -884,7 +1034,7 @@ impl DiveSim {
                 .map(|g| GraveMarker { id: g.id, x: g.x, y: g.y, looted: g.looted, items: g.items.clone() })
                 .collect(),
             inventory: self.carried.clone(),
-            blade_durability: 0,
+            blade_durability: self.blade_durability(),
             kills: self.kills,
             moves_applied: self.moves_applied,
             over: self.is_over(),
