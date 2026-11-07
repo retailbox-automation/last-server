@@ -1,0 +1,16 @@
+[package]
+name = "ls-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Deterministic dungeon rules for Last Server, shared by the contract and the browser"
+
+[features]
+default = []
+# JSON (de)serialization of the public types, used by the contract.
+serde = ["dep:serde"]
+# Native move-log generator used by tests and the gas benchmark. Not part of the rules.
+bot = []
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
