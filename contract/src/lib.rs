@@ -290,7 +290,7 @@ impl Contract {
                 for &(item, n) in &grave.items {
                     ls_core::add_item(&mut loot, item, n);
                 }
-                rows.push(GraveLog::of(&grave));
+                rows.push(LootedRow { grave_id: grave.id, owner_id: grave.owner_id.clone(), depth: grave.depth });
             }
             let items = named_u128(&loot);
             for (token, amount) in &items {
@@ -811,12 +811,22 @@ impl GraveLog {
     }
 }
 
+/// One looted grave in `grave_looted`. Kept small on purpose: a long dive can loot over a hundred
+/// graves and all logs of a call share a 16 KB limit (items are in the grave's `grave_created`).
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+struct LootedRow {
+    grave_id: u32,
+    owner_id: AccountId,
+    depth: u32,
+}
+
 #[derive(Serialize)]
 #[serde(crate = "near_sdk::serde")]
 struct GraveLootedLog<'a> {
     looter_id: &'a AccountId,
     dive_id: U64,
-    graves: Vec<GraveLog>,
+    graves: Vec<LootedRow>,
 }
 
 #[derive(Serialize)]
