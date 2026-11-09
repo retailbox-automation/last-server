@@ -15,7 +15,7 @@ fn same_inputs_same_outcome() {
     let a = run_dive(7, &entry, &moves);
     let b = run_dive(7, &entry, &moves);
     assert_eq!(a, b);
-    assert_eq!(a.moves_applied, 1000);
+    assert!(a.returned, "the bot walks back up before its 1000 moves run out: {a:?}");
 }
 
 #[test]
@@ -70,8 +70,8 @@ fn bot_log_of_3000_moves_goes_deep_and_survives() {
     }
     for (seed, out) in outcomes {
         assert!(out.final_depth > 1, "seed {seed} stayed at depth 1");
-        assert!(!out.died, "seed {seed} died at depth {}", out.final_depth);
-        assert_eq!(out.moves_applied, 3000);
+        assert!(out.returned && !out.died, "seed {seed} did not return from depth {}", out.final_depth);
+        assert!(out.moves_applied > 2500 && out.moves_applied <= 3000, "seed {seed}: {} moves", out.moves_applied);
         assert!(!out.picked.is_empty());
         assert!(out.kills > 0);
     }
@@ -96,7 +96,8 @@ fn random_move_bytes_never_panic() {
         };
         let out = run_dive(u64::from(i) * 7919, &entry, &moves);
         assert!(out.moves_applied as usize <= moves.len());
-        if !out.died {
+        assert!(out.died != out.returned, "case {i}: {out:?}");
+        if out.quit {
             assert_eq!(out.moves_applied as usize, moves.len());
         }
     }
@@ -287,7 +288,7 @@ fn view_tracks_the_dive() {
         assert!(v.monsters.iter().all(|m| m.hp > 0));
         assert!(v.tiles[(v.y * W + v.x) as usize] != WALL);
     }
-    assert!(!sim.view().over);
+    assert!(sim.view().over && sim.view().returned, "the survivor walks back up within its 400 moves");
 }
 
 #[test]
@@ -308,6 +309,7 @@ fn move_limit_ends_the_dive() {
     assert!(!sim.is_dead());
     let out = run_dive(1, &entry, &moves);
     assert!(out.moves_applied <= MAX_MOVES);
+    assert!(sim.outcome().quit, "a dive that runs out of moves inside the dungeon is a quit");
 }
 
 #[cfg(feature = "serde")]
@@ -612,4 +614,180 @@ fn die_at_leaves_a_grave_at_its_depth_without_looting() {
     }
     std::println!("DieAt: died {died}/60, at the target depth {at_target}/60");
     assert!(at_target >= 45, "died at the target depth in {at_target}/60 dives");
+}
+
+/// Up to `GRAVES_PER_DEPTH` graves on the tiles a well-equipped rusher walks over on every depth:
+/// the dive empties exactly `GRAVES_LOOTED_PER_DIVE` of them, in walking order, and leaves the rest.
+/// The graves hold only gold, which changes nothing in the dungeon, and looting draws no random
+/// numbers, so the same log walks the same path with and without them.
+#[test]
+fn a_dive_loots_at_most_graves_looted_per_dive() {
+    let cap = rules::GRAVES_LOOTED_PER_DIVE as usize;
+    let entry_of = |graves: Vec<Grave>| DiveEntry {
+        start_depth: 1,
+        inventory: vec![(ITEM_PLATE, 2), (ITEM_GEM, 5), (ITEM_BLADE, 10), (ITEM_POTION, 300)],
+        graves,
+    };
+    let (mut over_cap, mut most) = (0, 0);
+    for seed in 0..10u64 {
+        let plain = entry_of(vec![]);
+        let moves = generate_moves(seed, &plain, MAX_MOVES as usize, Style::Rusher);
+        let base = run_dive(seed, &plain, &moves);
+        // Tiles stepped on (not the stairs), per depth, first visits only.
+        let mut sim = DiveSim::new(seed, &plain);
+        let mut graves: Vec<Grave> = vec![];
+        for &mv in &moves {
+            let depth = sim.depth;
+            let ev = sim.step(mv);
+            if ev.events.iter().any(|e| matches!(e, Event::Descended { .. })) {
+                continue;
+            }
+            let Some(&Event::Moved { x, y }) = ev.events.iter().find(|e| matches!(e, Event::Moved { .. })) else {
+                continue;
+            };
+            let here = graves.iter().filter(|g| g.depth == depth);
+            if here.clone().count() as u32 >= rules::GRAVES_PER_DEPTH || here.clone().any(|g| (i32::from(g.x), i32::from(g.y)) == (x, y)) {
+                continue;
+            }
+            assert_eq!(generate_level(seed, depth, &[]).tile(x, y), FLOOR);
+            let id = graves.len() as u32;
+            graves.push(Grave { id, depth, x: x as u8, y: y as u8, items: vec![(ITEM_GOLD, 1)] });
+        }
+        most = most.max(graves.len());
+        let entry = entry_of(graves.clone());
+        let out = run_dive(seed, &entry, &moves);
+        std::println!(
+            "seed {seed}: depth {} died {} graves on its path {} looted {}",
+            out.final_depth,
+            out.died,
+            graves.len(),
+            out.looted_graves.len()
+        );
+        assert_eq!((out.final_depth, out.died, out.moves_applied), (base.final_depth, base.died, base.moves_applied));
+        let expected: Vec<u32> = graves.iter().take(cap).map(|g| g.id).collect();
+        assert_eq!(out.looted_graves, expected, "seed {seed}");
+        // Stepping agrees with run_dive; on the last depth a grave is marked looted only if it was.
+        let mut sim = DiveSim::new(seed, &entry);
+        for &mv in &moves {
+            sim.step(mv);
+        }
+        assert_eq!(sim.outcome(), out, "seed {seed}");
+        for g in sim.view().graves {
+            assert_eq!(g.looted, out.looted_graves.contains(&g.id), "seed {seed} grave {}", g.id);
+        }
+        over_cap += usize::from(graves.len() > cap);
+    }
+    std::println!("most graves on one dive's path: {most}; dives over the cap: {over_cap}/10");
+    assert!(over_cap >= 5, "the cap was reached in only {over_cap}/10 dives");
+}
+
+/// Once a dive has emptied as many graves as it can, the looting bots move on instead of walking
+/// between the graves left behind until the log runs out. `GRAVES_PER_DEPTH` graves (gold only) on
+/// depths 1..=6, more than the cap in total.
+#[test]
+fn bots_move_on_after_graves_looted_per_dive() {
+    let cap = rules::GRAVES_LOOTED_PER_DIVE as usize;
+    let (mut stuck, mut reached) = (std::vec::Vec::new(), 0);
+    for seed in 0..6u64 {
+        let mut graves = vec![];
+        for depth in 1..=6u32 {
+            let l = generate_level(seed, depth, &[]);
+            let spots = (0..W * H)
+                .map(|i| (i % W, i / W))
+                .filter(|&(x, y)| l.tile(x, y) == FLOOR && (x, y) != l.start)
+                .step_by(7)
+                .take(rules::GRAVES_PER_DEPTH as usize);
+            for (x, y) in spots {
+                let id = graves.len() as u32;
+                graves.push(Grave { id, depth, x: x as u8, y: y as u8, items: vec![(ITEM_GOLD, 1)] });
+            }
+        }
+        assert!(graves.len() > cap);
+        let entry = DiveEntry {
+            start_depth: 1,
+            inventory: vec![(ITEM_PLATE, 2), (ITEM_GEM, 5), (ITEM_BLADE, 10), (ITEM_POTION, 50)],
+            graves,
+        };
+        for style in [Style::Looter, Style::Survivor] {
+            let moves = generate_moves(seed, &entry, MAX_MOVES as usize, style);
+            let out = run_dive(seed, &entry, &moves);
+            std::println!("seed {seed} {style:?}: looted {} depth {} died {}", out.looted_graves.len(), out.final_depth, out.died);
+            assert!(out.looted_graves.len() <= cap);
+            if out.looted_graves.len() == cap {
+                reached += 1;
+                if out.final_depth <= 6 && !out.died {
+                    stuck.push((seed, style));
+                }
+            }
+        }
+    }
+    assert!(stuck.is_empty(), "bots that reached the cap and stayed among the graves: {stuck:?}");
+    assert!(reached >= 4, "only {reached}/12 dives reached the cap");
+}
+
+/// A log cut one move before the death it leads to banks nothing: it is a quit, which counts as a
+/// death where the player stood (grave and death toll as for any death).
+#[test]
+fn a_log_that_stops_before_death_is_a_quit_not_a_return() {
+    for seed in 0..20u64 {
+        let entry = DiveEntry { start_depth: 1, inventory: vec![(ITEM_GOLD, 57), (ITEM_BLADE, 2)], graves: vec![] };
+        let doomed = generate_moves(seed, &entry, 2000, Style::Doomed);
+        let dead = run_dive(seed, &entry, &doomed);
+        assert!(dead.died && !dead.quit && !dead.returned, "seed {seed}: {dead:?}");
+        let cut = &doomed[..dead.moves_applied as usize - 1];
+        let out = run_dive(seed, &entry, cut);
+        let mut sim = DiveSim::new(seed, &entry);
+        for &mv in cut {
+            sim.step(mv);
+        }
+        assert!(!sim.is_dead() && !sim.is_over(), "seed {seed}: alive after the cut log");
+        assert!(out.died && out.quit && !out.returned, "seed {seed}: {out:?}");
+        assert_eq!(out.death_pos, Some((sim.x as u8, sim.y as u8)), "seed {seed}");
+        assert!(out.hp_left > 0);
+        let mut grave = vec![];
+        let mut toll = vec![];
+        for &(id, n) in &sim.view().inventory {
+            let t = if id == ITEM_GOLD { n / rules::DEATH_TOLL_GOLD_DIV } else { 0 };
+            add_item(&mut grave, id, n - t);
+            add_item(&mut toll, id, t);
+        }
+        assert_eq!(out.dropped_into_grave, grave, "seed {seed}");
+        assert_eq!(count_item(&out.burned, ITEM_GOLD), count_item(&toll, ITEM_GOLD), "seed {seed}");
+    }
+}
+
+/// Walking back to where the dive arrived and taking the way up banks everything: the dive ends
+/// there (later moves are ignored), nothing is dropped. Anywhere else the move is a wait. An empty
+/// log is a quit at the start: the loadout, minus the toll, becomes the grave.
+#[test]
+fn the_way_up_returns_to_the_surface() {
+    let entry = DiveEntry { start_depth: 1, inventory: vec![(ITEM_GOLD, 30), (ITEM_PLATE, 1)], graves: vec![] };
+    let empty = run_dive(9, &entry, &[]);
+    let start = generate_level(9, 1, &[]).start;
+    assert!(empty.died && empty.quit && !empty.returned, "{empty:?}");
+    assert_eq!(empty.death_pos, Some((start.0 as u8, start.1 as u8)));
+    assert_eq!(empty.dropped_into_grave, vec![(ITEM_GOLD, 27), (ITEM_PLATE, 1)]);
+    assert_eq!(empty.burned, vec![(ITEM_GOLD, 3)]);
+
+    let mut sim = quiet_sim(&entry);
+    let (sx, sy) = (sim.x, sim.y);
+    assert_eq!((sim.view().exit_x, sim.view().exit_y), (sx, sy));
+    let (off, back) = [(MOVE_RIGHT, MOVE_LEFT, 1, 0), (MOVE_LEFT, MOVE_RIGHT, -1, 0), (MOVE_DOWN, MOVE_UP, 0, 1), (MOVE_UP, MOVE_DOWN, 0, -1)]
+        .into_iter()
+        .find(|&(_, _, dx, dy)| sim.level.tile(sx + dx, sy + dy) == FLOOR)
+        .map(|(off, back, _, _)| (off, back))
+        .expect("a floor tile next to the start");
+    sim.step(off);
+    let ev = sim.step(MOVE_SURFACE);
+    assert!(ev.applied && !sim.is_over() && !ev.events.contains(&Event::Surfaced), "off the way up it is a wait");
+    sim.step(back);
+    assert_eq!((sim.x, sim.y), (sx, sy));
+    let ev = sim.step(MOVE_SURFACE);
+    assert!(ev.events.contains(&Event::Surfaced), "{ev:?}");
+    assert!(sim.is_over() && sim.view().returned && sim.view().over);
+    assert!(!sim.step(MOVE_LEFT).applied, "moves after the return are ignored");
+    let out = sim.outcome();
+    assert!(out.returned && !out.died && !out.quit, "{out:?}");
+    assert!(out.death_pos.is_none() && out.dropped_into_grave.is_empty() && out.burned.is_empty());
+    assert_eq!(out.moves_applied, 4);
 }

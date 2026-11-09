@@ -78,6 +78,10 @@ pub const MOVE_RIGHT: u8 = 3;
 pub const MOVE_WAIT: u8 = 4;
 /// Drink a potion (heals `rules::POTION_HEAL`). Without a potion, or at full HP, it is a wait.
 pub const MOVE_POTION: u8 = 5;
+/// Return to the surface. Only on the tile where the dive arrived at its current depth (the way
+/// up, `DiveView::exit_x` / `exit_y`); anywhere else it is a wait. Only a dive that returns banks
+/// what it carries: a log that ends inside the dungeon counts as a death where the player stands.
+pub const MOVE_SURFACE: u8 = 6;
 
 fn move_delta(mv: u8) -> (i32, i32) {
     match mv {
@@ -179,7 +183,14 @@ impl GraveSource for &[Grave] {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DiveOutcome {
     pub final_depth: u32,
+    /// The dive ends as a death: killed, or the log ended inside the dungeon (`quit`).
     pub died: bool,
+    /// The log ends with a return to the surface (`MOVE_SURFACE` on the way up): what the player
+    /// carries is banked.
+    pub returned: bool,
+    /// The log ended inside the dungeon, without a return (or it ran out of moves there). This
+    /// counts as a death where the player stood: grave and death toll as for any death.
+    pub quit: bool,
     /// Moves processed before the dive ended (moves after death or past `MAX_MOVES` are ignored).
     pub moves_applied: u32,
     /// New items found in the dungeon (floor and monster drops): minted to the player.
@@ -238,6 +249,8 @@ pub enum Event {
     Spawned { monster: u32, x: i32, y: i32 },
     /// The player died at (x, y).
     Died { x: i32, y: i32 },
+    /// The player took the way up and left the dungeon: the dive is over, nothing is lost.
+    Surfaced,
 }
 
 /// The result of one `DiveSim::step`.
@@ -279,6 +292,9 @@ pub struct DiveView {
     pub height: u32,
     /// `width * height` tiles, row-major (`tiles[y * width + x]`): WALL, FLOOR, STAIRS, ...
     pub tiles: Vec<u8>,
+    /// The way up on this depth (where the dive arrived): `MOVE_SURFACE` works only here.
+    pub exit_x: i32,
+    pub exit_y: i32,
     pub x: i32,
     pub y: i32,
     pub hp: i32,
@@ -295,6 +311,7 @@ pub struct DiveView {
     pub moves_applied: u32,
     pub over: bool,
     pub died: bool,
+    pub returned: bool,
 }
 
 /// Adds `amount` of `id` to a small item list, keeping first-insertion order.
@@ -668,6 +685,8 @@ pub struct DiveSim {
     potions_used: u32,
     keys_used: u32,
     vault_opened: bool,
+    /// The player took the way up (`MOVE_SURFACE`).
+    returned: bool,
     /// When set (by `run_dive`), steps do not record events: same rules, less work on chain.
     quiet: bool,
     events: Vec<Event>,
@@ -715,6 +734,7 @@ impl DiveSim {
             potions_used: 0,
             keys_used: 0,
             vault_opened: false,
+            returned: false,
             quiet: false,
             events: Vec::new(),
         };
@@ -722,9 +742,10 @@ impl DiveSim {
         sim
     }
 
-    /// True once the player is dead or `MAX_MOVES` moves were applied; further steps are ignored.
+    /// True once the player is dead, has returned to the surface, or `MAX_MOVES` moves were
+    /// applied; further steps are ignored.
     pub fn is_over(&self) -> bool {
-        self.died || self.moves_applied >= MAX_MOVES
+        self.died || self.returned || self.moves_applied >= MAX_MOVES
     }
 
     pub fn is_dead(&self) -> bool {
@@ -748,6 +769,13 @@ impl DiveSim {
         self.moves_applied += 1;
         self.turn += 1;
 
+        if mv == MOVE_SURFACE && (self.x, self.y) == self.level.start {
+            // The way up: the dive ends here, before the monsters move, and everything carried is
+            // banked.
+            self.returned = true;
+            self.emit(Event::Surfaced);
+            return self.take_events();
+        }
         let (dx, dy) = move_delta(mv);
         if mv == MOVE_POTION {
             self.drink();
@@ -893,6 +921,10 @@ impl DiveSim {
             }
         }
         for gi in 0..self.level.graves.len() {
+            // A dive empties at most GRAVES_LOOTED_PER_DIVE graves; later ones stay where they are.
+            if self.looted.len() >= rules::GRAVES_LOOTED_PER_DIVE as usize {
+                break;
+            }
             let spot = &mut self.level.graves[gi];
             if spot.looted || spot.x != self.x || spot.y != self.y {
                 continue;
@@ -1014,6 +1046,8 @@ impl DiveSim {
             width: W as u32,
             height: H as u32,
             tiles: self.level.tiles.to_vec(),
+            exit_x: self.level.start.0,
+            exit_y: self.level.start.1,
             x: self.x,
             y: self.y,
             hp: self.hp,
@@ -1039,14 +1073,18 @@ impl DiveSim {
             moves_applied: self.moves_applied,
             over: self.is_over(),
             died: self.died,
+            returned: self.returned,
         }
     }
 
-    /// What the contract would apply if the dive ended now (the log ends here, or it is over).
+    /// What the contract would apply if the log ended here. Unless the player died or returned,
+    /// that is a quit: a death where the player stands.
     pub fn outcome(&self) -> DiveOutcome {
+        let quit = !self.died && !self.returned;
+        let dead = self.died || quit;
         let mut dropped = Vec::new();
         let mut burned = self.burned.clone();
-        if self.died {
+        if dead {
             for &(id, amount) in &self.carried {
                 let toll = if id == ITEM_GOLD { amount / rules::DEATH_TOLL_GOLD_DIV } else { 0 };
                 add_item(&mut burned, id, toll);
@@ -1055,13 +1093,15 @@ impl DiveSim {
         }
         DiveOutcome {
             final_depth: self.depth,
-            died: self.died,
+            died: dead,
+            returned: self.returned,
+            quit,
             moves_applied: self.moves_applied,
             picked: self.picked.clone(),
             looted_graves: self.looted.clone(),
             dropped_into_grave: dropped,
             burned,
-            death_pos: self.death_pos,
+            death_pos: if quit { Some((self.x as u8, self.y as u8)) } else { self.death_pos },
             hp_left: self.hp.max(0) as u32,
             kills: self.kills,
             blades_broken: self.blades_broken,
