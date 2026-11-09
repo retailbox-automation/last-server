@@ -11,3 +11,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 near-sdk = "=5.30.1"
 ls-core = { path = "../crates/ls-core", features = ["serde"] }
+
+[dev-dependencies]
+# Native unit tests (log sizes) build near-sdk off-chain; the wasm build does not use this.
+near-sdk = { version = "=5.30.1", features = ["non-contract-usage"] }

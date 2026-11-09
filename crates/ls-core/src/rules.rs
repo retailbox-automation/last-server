@@ -107,3 +107,14 @@ pub const VAULT_GEMS: u32 = 1;
 pub const DEATH_TOLL_GOLD_DIV: u32 = 10;
 /// Graves kept per depth; a new grave beyond this makes the oldest one crumble (its items burn).
 pub const GRAVES_PER_DEPTH: u32 = 10;
+/// Graves one dive can empty. Beyond this the player walks over graves without taking them (they
+/// stay for the next player). It bounds what one `settle_dive` writes and logs: NEAR allows 16 KB
+/// of logs per call and every looted grave adds a log row (the contract tests check the worst case).
+pub const GRAVES_LOOTED_PER_DIVE: u32 = 50;
+
+// ---- dive lifetime (applied by the contract) -------------------------------------------------
+
+/// An open dive can be expired by anyone once its day is over AND at least this long after it
+/// started, so a dive started just before 00:00 UTC is not expired at 00:00:01 while its owner
+/// is still playing.
+pub const EXPIRE_GRACE_SECONDS: u64 = 4 * 3600;
