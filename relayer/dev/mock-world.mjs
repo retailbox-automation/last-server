@@ -198,7 +198,8 @@ function rpc(method, params) {
       }
       case 'view_account':
         if (![PARENT, WORLD].includes(params.account_id) && !accounts.has(params.account_id)) throw unknownAccount(params.account_id, base);
-        return { ...base, amount: '1000000000000000000000000', locked: '0', code_hash: '11111111111111111111111111111111', storage_usage: 100, storage_paid_at: 0, global_contract_hash: null, global_contract_account_id: null };
+        // 1000 NEAR, so the studio balance floor of the relayer never blocks local signups.
+        return { ...base, amount: '1000000000000000000000000000', locked: '0', code_hash: '11111111111111111111111111111111', storage_usage: 100, storage_paid_at: 0, global_contract_hash: null, global_contract_account_id: null };
       default: throw Object.assign(new Error('unsupported query'), { rpc: true });
     }
   }

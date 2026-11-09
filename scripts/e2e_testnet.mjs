@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // End-to-end check against a LIVE testnet world contract, through the real relayer code:
 //   contract core_version == the web's wasm rules -> sign up player A -> start_dive -> settle_dive with a
-//   move log that dies holding loot (both as NEP-366 signed delegates) -> A's grave is on the chain ->
-//   sign up player B -> B's dive walks to that grave and loots it -> read everything back over RPC.
+//   move log that gets A killed holding loot (both as NEP-366 signed delegates) -> A's grave is on the
+//   chain -> sign up player B -> B's dive walks to that grave, loots it, walks back to the way up and
+//   climbs out (MOVE_SURFACE; a log that ends inside the dungeon counts as a death) -> read back over RPC.
 // Run by whoever holds the studio key (lane NEARLS); it spends a little testnet NEAR (2 accounts x
 // SIGNUP_FUNDING_NEAR + gas). The move logs come from scripts/grave_bot.mjs on the web's wasm rules; if
-// they find no plan on today's map, the script says so (TODO) and runs a plain dive instead.
+// they find no plan on today's map, the script says so (TODO) and runs a dive that climbs straight out.
 //
 //   cd relayer && npm ci && cd ../web && npm ci && npm run build && cd ..      # build makes web/src/wasm
 //   LASTSERVER_ACCOUNT_ID=lastserver.testnet LASTSERVER_SECRET_KEY=ed25519:... \
@@ -15,7 +16,7 @@
 // Expected contract API: SPEC-CORE-V1 section A (start_dive, settle_dive, active_dive, player, current_day).
 
 import { readFileSync } from 'node:fs';
-import { dieWithLoot, lootGrave } from './grave_bot.mjs';
+import { SURFACE_NOW, dieWithLoot, lootGrave } from './grave_bot.mjs';
 
 const relayerDir = new URL('../relayer/', import.meta.url);
 const near = await import(new URL('node_modules/near-api-js/lib/index.js', relayerDir).href);
@@ -107,8 +108,7 @@ async function settleDive(p, ticket, moves, label) {
 }
 
 /** What a player sees of a dive; equal on both sides = the web replays the dive like the contract. */
-const digest = (o) => JSON.stringify([o.died, o.final_depth, o.picked, o.looted_graves, o.dropped_into_grave, o.burned]);
-const PLAIN_MOVES = Uint8Array.from(Array.from({ length: 200 }, (_, i) => [3, 3, 1, 1, 2, 4, 0, 5][i % 8]));
+const digest = (o) => JSON.stringify([o.died, o.returned, o.quit, o.final_depth, o.picked, o.looted_graves, o.dropped_into_grave, o.burned]);
 
 try {
   const health = await (await fetch(base + '/health')).json();
@@ -148,11 +148,12 @@ try {
   const active = await view('active_dive', { account_id: accountId });
   check(active && String(active.dive_id) === String(ticket.dive_id), 'active_dive view shows the ticket');
 
-  // 4. settle_dive through the relayer: a log that dies holding loot (or a plain log if no plan)
+  // 4. settle_dive through the relayer: a log that gets A killed holding loot (or one that climbs straight out)
   const plan = w ? dieWithLoot(w, ticket.seed, entry) : null;
-  if (!plan) todo(`grave path: no "pick up, then die" plan on today's map for A (seed ${ticket.seed}); plain dive instead, grave path not tested`);
-  const moves = plan ? plan.moves : PLAIN_MOVES;
+  if (!plan) todo(`grave path: no "pick up, then die" plan on today's map for A (seed ${ticket.seed}); A climbs straight out instead, grave path not tested`);
+  const moves = plan ? plan.moves : SURFACE_NOW;
   const outcome = await settleDive(a, ticket, moves, 'A');
+  if (!plan) check(outcome?.returned === true && outcome.died === false, 'A climbed out on the way up: returned, not a death', JSON.stringify(outcome)?.slice(0, 160));
   if (plan && outcome) {
     check(digest(outcome) === digest(plan.outcome), 'A: contract outcome equals the web wasm replay of the same log',
       `contract ${digest(outcome)} web ${digest(plan.outcome)}`.slice(0, 300));
@@ -168,6 +169,7 @@ try {
 
   // 6. the grave path: A's grave is on the chain, player B walks to it and takes it
   if (plan && outcome?.died) {
+    check(outcome.quit === false && outcome.returned === false, 'A was killed (not a quit)');
     check(Number(me.deaths) === 1, 'player view counts the death', JSON.stringify(me));
     const here = await view('graves', { depth: outcome.final_depth });
     const grave = here.find((g) => g.owner_id === accountId && String(g.dive_id) === String(ticket.dive_id));
@@ -177,16 +179,17 @@ try {
       const bDive = await startDive(b, 'B');
       const route = lootGrave(w, bDive.ticket.seed, bDive.entry, grave.id);
       if (!route) {
-        todo(`grave path: no safe route to grave ${grave.id} for B (seed ${bDive.ticket.seed}); B settles an empty dive instead`);
-        await settleDive(b, bDive.ticket, new Uint8Array(), 'B');
+        todo(`grave path: no route for B to grave ${grave.id} and back up (seed ${bDive.ticket.seed}; killed on the way, or 50 graves looted first); B climbs straight out instead`);
+        await settleDive(b, bDive.ticket, SURFACE_NOW, 'B');
       } else {
         const bOut = await settleDive(b, bDive.ticket, route.moves, 'B');
-        check(bOut && bOut.looted_graves.includes(grave.id) && !bOut.died, `B looted grave ${grave.id} and came back`, JSON.stringify(bOut?.looted_graves));
+        check(bOut && bOut.looted_graves.includes(grave.id) && bOut.returned && !bOut.died, `B looted grave ${grave.id} and climbed out`, JSON.stringify(bOut?.looted_graves));
+        check(bOut && bOut.looted_graves.length <= 50, 'B looted at most GRAVES_LOOTED_PER_DIVE (50) graves', String(bOut?.looted_graves.length));
         check(bOut && digest(bOut) === digest(route.outcome), 'B: contract outcome equals the web wasm replay of the same log');
         const left = await view('graves', { depth: grave.depth });
         check(!left.some((g) => g.id === grave.id), 'the grave is gone from the graves view');
         const stash = new Map((await view('player', { account_id: b.accountId })).stash.map(([t, n]) => [t, BigInt(n)]));
-        check(grave.items.every(([t, n]) => (stash.get(t) ?? 0n) >= BigInt(n)), "B's stash holds what the grave held", JSON.stringify([...stash]));
+        check(grave.items.every(([t, n]) => (stash.get(t) ?? 0n) >= BigInt(n)), "B's stash holds what the grave held", [...stash].map(([t, n]) => `${t}:${n}`).join(' '));
       }
     }
   } else if (plan) {
