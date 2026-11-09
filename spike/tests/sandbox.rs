@@ -483,7 +483,7 @@ async fn blue_key_opens_the_vault_and_mints_a_gem() -> R<()> {
     let tom = new_account(&env, "tom").await?;
     // Dive until a blue key is in the stash (keys drop from depth 5; a deep dive usually finds
     // one and may already open the depth-7 vault on the way).
-    let mut gem_from_vault = false;
+    let mut gem_run_returned = None;
     for attempt in 0..3 {
         let stash = balances(&env, tom.id()).await?;
         let key = stash[idx("blue_key")];
@@ -502,12 +502,19 @@ async fn blue_key_opens_the_vault_and_mints_a_gem() -> R<()> {
             assert_eq!(settled["data"][0]["vault_opened"], true);
             let mint = run.events.iter().find(|e| e["event"] == "mt_mint").unwrap();
             assert!(mint["data"][0]["token_ids"].as_array().unwrap().contains(&json!("gem")));
-            gem_from_vault = true;
+            gem_run_returned = Some(run.outcome.returned);
             break;
         }
     }
-    assert!(gem_from_vault, "no vault opened in 3 dives");
-    assert!(balances(&env, tom.id()).await?[idx("gem")] >= 1);
+    let returned = gem_run_returned.expect("no vault opened in 3 dives");
+    let gem: Value = view(&env, "economy", json!({ "token_id": "gem" })).await?;
+    assert!(gem["minted"].as_str().unwrap().parse::<u128>()? >= 1);
+    if returned {
+        assert!(balances(&env, tom.id()).await?[idx("gem")] >= 1);
+    } else {
+        // The bot died before it got back up: the gem went into its grave with everything else.
+        assert!(gem["to_graves"].as_str().unwrap().parse::<u128>()? >= 1);
+    }
     let e: Value = view(&env, "economy", json!({ "token_id": "blue_key" })).await?;
     assert!(e["burned"].as_str().unwrap().parse::<u128>()? >= 1);
     check_counters(&env).await
@@ -958,16 +965,17 @@ async fn now_ns(env: &Env) -> R<u64> {
     Ok(env.worker.view_block().await?.timestamp())
 }
 
-/// Fast-forwards the sandbox until its latest block is at or past `target_ns`. The time per block
-/// is measured on the way, so it lands a few blocks past the target.
+/// Fast-forwards the sandbox until its latest block is at or past `target_ns`. The chain time per
+/// block is measured on the way and grows when the machine is busy, so each round covers three
+/// quarters of the estimated distance: the last rounds are short and land close to the target.
 async fn advance_to(env: &Env, target_ns: u64) -> R<u64> {
     let mut now = now_ns(env).await?;
     let mut ns_per_block = 0u64;
     let mut rounds = 0;
     while now < target_ns {
         rounds += 1;
-        assert!(rounds <= 60, "advance_to did not reach {target_ns} (now {now})");
-        let blocks = if ns_per_block == 0 { 100 } else { ((target_ns - now) / ns_per_block).clamp(1, 500_000) };
+        assert!(rounds <= 200, "advance_to did not reach {target_ns} (now {now})");
+        let blocks = if ns_per_block == 0 { 100 } else { ((target_ns - now) / ns_per_block * 3 / 4).clamp(1, 500_000) };
         env.worker.fast_forward(blocks).await?;
         let after = now_ns(env).await?;
         if after > now {
