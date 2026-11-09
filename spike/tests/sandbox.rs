@@ -10,7 +10,7 @@
 //! `settle_dive(seed, moves)` and is replaced by this one; its results stay in GAS-RESULTS.md.)
 
 use base64::Engine;
-use ls_core::bot::{generate_moves, Style, BOT_MAX_DEPTH};
+use ls_core::bot::{generate_moves, moves_to_quit_at, safe_grave_spots, Style, BOT_MAX_DEPTH};
 use ls_core::rules::{EXPIRE_GRACE_SECONDS, GRAVES_PER_DEPTH};
 use ls_core::{run_dive, DiveEntry, DiveOutcome, MAX_MOVES};
 use near_workspaces::network::Sandbox;
@@ -723,50 +723,57 @@ async fn settle_guards() -> R<()> {
 // Gas benchmark
 // ---------------------------------------------------------------------------------------------
 
-/// Puts `total` graves on depths 10 down to 1 and then 11 onwards, `per_depth` each, by letting
-/// `digger` die there (deep first, so the depths a dive passes on the way down are still empty)
-/// (DieAt bots walk around graves; the digger carries 1 gold when it has some, so even a death
-/// at depth 1 leaves a grave). A depth where `per_depth * 2 + 6` dives in a row add nothing (a
-/// grave walls the bot off on this day's map) is skipped for the next one. Returns the dives.
-async fn fill_graves(env: &Env, digger: &Account, per_depth: u32, total: u32, skipped: &mut Vec<u32>) -> R<u32> {
+/// Fills depths 1..=10 to `GRAVES_PER_DEPTH` graves each, deepest first, with real dives: for each
+/// missing grave `digger` carries 1 gold down to a free spot from `bot::safe_grave_spots` (tiles
+/// where graves never cut the day's map apart) and its log ends there, which the rules count as a
+/// quit, so the grave lands on that spot. Every log is replayed natively before it is sent
+/// (`bot::moves_to_quit_at`, with a few opening waits when the rolls kill the bot on the way), so
+/// the fill needs no luck and no day change. A fill dive walks around graves and over one only when
+/// it is the only way; a grave it takes that way is refilled on a safe spot when its depth comes
+/// up (depths are filled deepest first). Returns the fill dives.
+async fn fill_graves(env: &Env, digger: &Account) -> R<u32> {
     let mut dives = 0;
-    let mut stalled = (0u32, 0u32); // (depth, dives without progress)
-    loop {
-        let summary: Vec<(u32, u32)> = view(env, "graves_summary", json!({})).await?;
-        let count = |d: u32| summary.iter().find(|r| r.0 == d).map_or(0, |r| r.1);
-        let in_state: u32 = summary.iter().map(|r| r.1).sum();
-        if in_state >= total {
-            return Ok(dives);
-        }
-        let target = (1..=10u32)
-            .rev()
-            .chain(11..=60)
-            .find(|&d| !skipped.contains(&d) && count(d) < per_depth)
-            .ok_or("no depth left")?;
-        if stalled.0 == target {
-            stalled.1 += 1;
-            if stalled.1 > per_depth * 2 + 6 {
-                println!("depth {target} stalled at {} graves: skipped", count(target));
-                skipped.push(target);
-                continue;
+    for depth in (1..=10u32).rev() {
+        loop {
+            let here: Vec<Value> = view(env, "graves", json!({ "depth": depth })).await?;
+            if here.len() as u32 >= GRAVES_PER_DEPTH {
+                break;
             }
-        } else {
-            stalled = (target, 0);
-        }
-        dives += 1;
-        if dives > 500 {
-            return Err(format!("could not fill graves: {summary:?}").into());
-        }
-        let gold = balances(env, digger.id()).await?[idx("gold")];
-        let loadout: Vec<(&str, u128)> = if gold > 0 { vec![("gold", 1)] } else { vec![] };
-        let n = (400 + 250 * target as usize).min(MAX_MOVES as usize);
-        let before = count(target);
-        dive(env, digger, &loadout, Style::DieAt(target), n).await?;
-        let after: Vec<(u32, u32)> = view(env, "graves_summary", json!({})).await?;
-        if after.iter().find(|r| r.0 == target).map_or(0, |r| r.1) > before {
-            stalled = (target, 0);
+            dives += 1;
+            if dives > 600 {
+                return Err(format!("fill_graves: over 600 dives, depth {depth} at {}", here.len()).into());
+            }
+            if balances(env, digger.id()).await?[idx("gold")] == 0 {
+                let warm = dive(env, digger, &[], Style::DieAt(BOT_MAX_DEPTH), 1500).await?;
+                assert!(warm.outcome.returned && balances(env, digger.id()).await?[idx("gold")] > 0, "{:?}", warm.outcome);
+            }
+            let ticket = start(env, digger, &[("gold", 1)]).await?;
+            let entry: DiveEntry = view(env, "dive_entry", json!({ "account_id": digger.id() })).await?;
+            let taken: Vec<(u8, u8)> = here.iter().map(|g| (g["x"].as_u64().unwrap() as u8, g["y"].as_u64().unwrap() as u8)).collect();
+            let spot = safe_grave_spots(ticket.seed(), depth, GRAVES_PER_DEPTH as usize)
+                .into_iter()
+                .find(|s| !taken.contains(s))
+                .ok_or_else(|| format!("depth {depth}: every safe spot is taken but only {} graves", here.len()))?;
+            let moves = (0..40)
+                .find_map(|delay| moves_to_quit_at(ticket.seed(), &entry, depth, spot, MAX_MOVES as usize, delay))
+                .ok_or_else(|| format!("no log reaches {spot:?} at depth {depth}"))?;
+            let (out, _, _) = settle(env, digger, &ticket, &entry, &moves).await?;
+            assert!(out.died && out.final_depth == depth && out.death_pos == Some(spot), "fill dive: {out:?}");
         }
     }
+    let summary: Vec<(u32, u32)> = view(env, "graves_summary", json!({})).await?;
+    for depth in 1..=10u32 {
+        let n = summary.iter().find(|r| r.0 == depth).map_or(0, |r| r.1);
+        if n != GRAVES_PER_DEPTH {
+            return Err(format!("fill_graves: depth {depth} holds {n} graves after the fill: {summary:?}").into());
+        }
+    }
+    Ok(dives)
+}
+
+/// Whether depths 1..=10 hold `GRAVES_PER_DEPTH` graves each (the spec's case: 100 graves on 10 depths).
+fn depths_1_to_10_full(summary: &[(u32, u32)]) -> bool {
+    (1..=10u32).all(|d| summary.iter().any(|r| r.0 == d && r.1 == GRAVES_PER_DEPTH))
 }
 
 #[tokio::test]
@@ -774,13 +781,16 @@ async fn bench_v1_gas() -> R<()> {
     let env = setup().await?;
     let status = env.worker.status().await?;
     let mut rows: Vec<Value> = vec![];
-    let mut record = |label: &str, n: usize, graves_in_state: u32, run: &Run| {
+    let mut record = |label: &str, n: usize, summary: &[(u32, u32)], run: &Run| {
+        let graves_in_state: u32 = summary.iter().map(|r| r.1).sum();
+        let full = depths_1_to_10_full(summary);
         let visited: u32 = run.entry.graves.iter().filter(|g| g.depth <= run.outcome.final_depth).count() as u32;
         println!(
-            "{label} n={n} graves_in_state={graves_in_state} visited_depth_graves={visited} looted={} applied={} depth={} died={} gas={:.3} Tgas",
+            "{label} n={n} graves_in_state={graves_in_state} depths_1_10_full={full} visited_depth_graves={visited} looted={} applied={} depth={} returned={} died={} gas={:.3} Tgas",
             run.outcome.looted_graves.len(),
             run.outcome.moves_applied,
             run.outcome.final_depth,
+            run.outcome.returned,
             run.outcome.died,
             tgas(run.gas)
         );
@@ -788,10 +798,12 @@ async fn bench_v1_gas() -> R<()> {
             "style": label,
             "n": n,
             "graves_in_state": graves_in_state,
+            "depths_1_10_full": full,
             "graves_on_visited_depths": visited,
             "graves_looted": run.outcome.looted_graves.len(),
             "moves_applied": run.outcome.moves_applied,
             "final_depth": run.outcome.final_depth,
+            "returned": run.outcome.returned,
             "died": run.outcome.died,
             "total_gas_burnt": run.gas,
             "tgas": tgas(run.gas),
@@ -800,28 +812,28 @@ async fn bench_v1_gas() -> R<()> {
         }));
     };
 
-    // 1. No graves on the server.
+    // 1. Before filling: no graves except those the dives above left (bots that die leave one).
     for (style, label) in [(Style::Survivor, "survivor"), (Style::Rusher, "rusher")] {
         for n in [300usize, 1000, 3000] {
+            let summary: Vec<(u32, u32)> = view(&env, "graves_summary", json!({})).await?;
             let who = new_account(&env, &format!("{label}{n}")).await?;
             let run = dive(&env, &who, &[], style, n).await?;
-            record(label, n, 0, &run);
+            record(label, n, &summary, &run);
         }
     }
 
-    // 2. 100 graves: GRAVES_PER_DEPTH on each of depths 1..=10 (deeper ones if a depth stalls),
-    //    refilled before every row.
+    // 2. GRAVES_PER_DEPTH graves on each of depths 1..=10, refilled before every row.
     const TOTAL: u32 = 100;
     let digger = new_account(&env, "digger").await?;
-    // Collect gold first, so even its depth-1 deaths leave graves.
+    // Collect gold first: every fill dive carries 1 gold, so even a depth-1 quit leaves a grave.
     let warm = dive(&env, &digger, &[], Style::DieAt(BOT_MAX_DEPTH), 1500).await?;
-    assert!(!warm.outcome.died && balances(&env, digger.id()).await?[idx("gold")] > 50);
-    let mut skipped: Vec<u32> = vec![];
+    assert!(warm.outcome.returned && balances(&env, digger.id()).await?[idx("gold")] > 50, "{:?}", warm.outcome);
     let t0 = std::time::Instant::now();
-    let fill_dives = fill_graves(&env, &digger, GRAVES_PER_DEPTH, TOTAL, &mut skipped).await?;
+    let fill_dives = fill_graves(&env, &digger).await?;
     let first_fill: Vec<(u32, u32)> = view(&env, "graves_summary", json!({})).await?;
-    println!("filled {TOTAL} graves with {fill_dives} dives in {:.0}s: {first_fill:?}", t0.elapsed().as_secs_f64());
+    println!("filled with {fill_dives} dives in {:.0}s: {first_fill:?}", t0.elapsed().as_secs_f64());
     let mut summaries: Vec<Value> = vec![];
+    let mut refill_dives = 0;
     let cases = [
         (Style::DieAt(BOT_MAX_DEPTH), "avoider", 300usize),
         (Style::Rusher, "rusher", 300),
@@ -832,24 +844,29 @@ async fn bench_v1_gas() -> R<()> {
         (Style::Survivor, "survivor", 3000),
     ];
     for (i, (style, label, n)) in cases.into_iter().enumerate() {
-        fill_graves(&env, &digger, GRAVES_PER_DEPTH, TOTAL, &mut skipped).await?;
+        refill_dives += fill_graves(&env, &digger).await?;
         let summary: Vec<(u32, u32)> = view(&env, "graves_summary", json!({})).await?;
-        let in_state: u32 = summary.iter().map(|r| r.1).sum();
         let who = new_account(&env, &format!("g{i}{label}{n}")).await?;
         let run = dive(&env, &who, &[], style, n).await?;
-        record(label, n, in_state, &run);
+        record(label, n, &summary, &run);
         summaries.push(json!({ "row": i, "graves_summary": summary }));
     }
     drop(record);
 
-    let worst = |n: usize, with_graves: bool| {
+    let worst = |n: usize, full: bool| {
         rows.iter()
-            .filter(|r| r["n"] == n && (r["graves_in_state"].as_u64().unwrap() > 0) == with_graves)
+            .filter(|r| r["n"] == n && r["depths_1_10_full"] == full)
             .map(|r| r["tgas"].as_f64().unwrap())
             .fold(0.0, f64::max)
     };
+    // The spec's case is 300 moves with 100 graves on depths 1..=10. Settle reads only the depths a
+    // dive enters, so a run without those depths full answers nothing (INVALID), it is not a PASS.
+    let qualifying: Vec<&Value> = rows.iter().filter(|r| r["n"] == 300 && r["depths_1_10_full"] == true).collect();
     let worst_300_graves = worst(300, true);
-    let pass = worst_300_graves <= 10.0;
+    let min_visited_300 = qualifying.iter().map(|r| r["graves_on_visited_depths"].as_u64().unwrap()).min().unwrap_or(0);
+    let valid = qualifying.len() == 4;
+    let pass = valid && worst_300_graves <= 10.0;
+    let verdict = if !valid { "INVALID" } else if pass { "PASS" } else { "FAIL" };
     let results = json!({
         "generated_by": "spike/tests/sandbox.rs bench_v1_gas",
         "unix_time": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs(),
@@ -862,11 +879,19 @@ async fn bench_v1_gas() -> R<()> {
         "core": { "ls_core": ls_core::VERSION, "rules_sha256": ls_core::RULES_HASH, "core_sha256": ls_core::CORE_HASH },
         "prepaid_tgas": PREPAID_TGAS,
         "graves_per_depth": GRAVES_PER_DEPTH,
-        "first_fill": { "dives": fill_dives, "graves_summary": first_fill },
-        "depths_skipped_while_filling": skipped,
+        "fill": {
+            "method": "real dives that end on safe spots (ls_core::bot::safe_grave_spots / moves_to_quit_at), deepest depth first",
+            "first_fill_dives": fill_dives,
+            "refill_dives": refill_dives,
+            "graves_summary_after_first_fill": first_fill,
+        },
         "graves_summary_before_each_graves_row": summaries,
         "rows": rows,
-        "threshold": { "n": 300, "graves_in_state": 100, "limit_tgas": 10, "worst_tgas": worst_300_graves, "pass": pass },
+        "threshold": {
+            "n": 300, "graves": TOTAL, "on_depths": "1..=10", "limit_tgas": 10, "worst_tgas": worst_300_graves,
+            "qualifying_rows": qualifying.len(), "min_graves_on_visited_depths": min_visited_300,
+            "verdict": verdict, "pass": pass,
+        },
     });
     std::fs::create_dir_all(docs_dir())?;
     std::fs::write(docs_dir().join("GAS-RESULTS-V1.json"), serde_json::to_string_pretty(&results)?)?;
@@ -877,27 +902,28 @@ async fn bench_v1_gas() -> R<()> {
         "Generated by `spike/tests/sandbox.rs` (`bench_v1_gas`). Sandbox node {} (protocol {}), wasm {} bytes, ls-core {} (rules sha256 `{}`), prepaid {} Tgas per call. Every dive is `start_dive` + `settle_dive` on the contract's day seed from a fresh account with an empty loadout, and every outcome equals the native `run_dive` on the same input. Raw numbers: `GAS-RESULTS-V1.json`.\n\n",
         status.version.version, status.protocol_version, env.wasm_len, ls_core::VERSION, ls_core::RULES_HASH, PREPAID_TGAS
     ));
-    md.push_str("| bot | moves (applied) | graves on the server | graves on the depths it entered | graves looted | depth reached | died | settle_dive gas, Tgas |\n|---|---|---|---|---|---|---|---|\n");
+    md.push_str("| bot | moves (applied) | graves on the server | depths 1-10 full | graves on the depths it entered | graves looted | depth reached | ending | settle_dive gas, Tgas |\n|---|---|---|---|---|---|---|---|---|\n");
     for r in &rows {
         md.push_str(&format!(
-            "| {} | {} ({}) | {} | {} | {} | {} | {} | {:.2} |\n",
+            "| {} | {} ({}) | {} | {} | {} | {} | {} | {} | {:.2} |\n",
             r["style"].as_str().unwrap(),
             r["n"],
             r["moves_applied"],
             r["graves_in_state"],
+            if r["depths_1_10_full"].as_bool().unwrap() { "yes" } else { "no" },
             r["graves_on_visited_depths"],
             r["graves_looted"],
             r["final_depth"],
-            if r["died"].as_bool().unwrap() { "yes" } else { "no" },
+            if r["returned"].as_bool().unwrap() { "returned" } else { "died" },
             r["tgas"].as_f64().unwrap(),
         ));
     }
     md.push_str(&format!(
-        "\nBots: survivor fights, drinks, rests, collects items and graves, opens the vault with a key, descends to depth {BOT_MAX_DEPTH}; looter goes for graves first; rusher runs for the stairs (most new maps per move); avoider plays like survivor but walks around graves (it reads every grave on its depths and loots none). Before each row with graves the server is refilled to {TOTAL} graves, {GRAVES_PER_DEPTH} per depth on depths 10 down to 1, then 11 onwards (a depth where the filling bot gets walled off by a grave on this day's map is skipped: {skipped:?}). Graves per depth at the first fill: {first_fill:?}; before every row: `graves_summary_before_each_graves_row` in the JSON.\n"
+        "\nBots: survivor fights, drinks, rests, collects items and graves, opens the vault with a key, descends to depth {BOT_MAX_DEPTH}; looter goes for graves first; rusher runs for the stairs (most new maps per move); avoider plays like survivor but walks around graves (it reads every grave on its depths and loots none). Every bot walks back up and returns to the surface before its moves run out (a log that ends inside the dungeon counts as a death). Before each row with graves the server is refilled to {GRAVES_PER_DEPTH} graves on each of depths 1 to 10 by real dives that end on spots where graves never cut the day's map apart (`ls_core::bot::safe_grave_spots`, `moves_to_quit_at`): {fill_dives} dives for the first fill, {refill_dives} for the refills. Graves per depth before every row: `graves_summary_before_each_graves_row` in the JSON.\n"
     ));
     md.push_str(&format!(
-        "\nThreshold: 300 moves with 100 graves on the server must cost at most 10 Tgas. Worst such run: {worst_300_graves:.2} Tgas, {}. Worst 300-move run without graves: {:.2} Tgas; worst 1000: {:.2} / {:.2} Tgas (no graves / graves); worst 3000: {:.2} / {:.2} Tgas.\n",
-        if pass { "PASS" } else { "FAIL" },
+        "\nThreshold: 300 moves with {TOTAL} graves on depths 1 to 10 must cost at most 10 Tgas. Worst such run: {worst_300_graves:.2} Tgas, {verdict} ({} qualifying 300-move runs; they entered depths holding at least {min_visited_300} graves). Worst 300-move run before filling: {:.2} Tgas; worst 1000: {:.2} / {:.2} Tgas (before filling / depths 1-10 full); worst 3000: {:.2} / {:.2} Tgas.\n",
+        qualifying.len(),
         worst(300, false),
         worst(1000, false),
         worst(1000, true),
@@ -910,13 +936,15 @@ async fn bench_v1_gas() -> R<()> {
         "# toolchain: rustc with the wasm32-unknown-unknown target; .cargo/config.toml adds --cfg near for wasm\n",
         "cargo test -p ls-core --features serde\n",
         "cargo build --target wasm32-unknown-unknown --release -p ls-contract\n",
-        "cargo test -p spike --release --test sandbox -- --test-threads=1 --nocapture   # downloads near-sandbox on first build\n",
+        "cargo test -p spike --release --test sandbox bench_v1_gas -- --nocapture   # downloads near-sandbox on first build\n",
         "```\n",
     ));
     std::fs::write(docs_dir().join("GAS-RESULTS-V1.md"), md)?;
-    println!("worst 300-move run with 100 graves: {worst_300_graves:.3} Tgas ({})", if pass { "PASS" } else { "FAIL" });
-    assert!(pass, "300 moves with 100 graves cost {worst_300_graves:.3} Tgas > 10");
-    check_counters(&env).await
+    println!("worst 300-move run with {TOTAL} graves on depths 1-10: {worst_300_graves:.3} Tgas ({verdict}; qualifying rows {}; min graves on entered depths {min_visited_300})", qualifying.len());
+    check_counters(&env).await?;
+    assert!(valid, "bench INVALID: {} of 4 300-move rows ran with depths 1-10 full", qualifying.len());
+    assert!(pass, "300 moves with {TOTAL} graves on depths 1-10 cost {worst_300_graves:.3} Tgas > 10");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------------------------
