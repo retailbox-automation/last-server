@@ -1,7 +1,8 @@
 // Local stand-in for NEAR testnet + world contract + studio account, for developing the web client
 // without a deployed contract: a JSON-RPC server (views, access keys, send_tx) and the real relayer
-// code running on a fake chain. It runs the rules through the SAME wasm the browser uses, so it
-// cannot catch a rules bug; it exists to exercise the UI, the signed-delegate path and the fallback.
+// (NearChain included) talking to it with a throwaway studio key. Query answers copy the shapes
+// test.rpc.fastnear.com returned on 2026-11-09. It runs the rules through the SAME wasm the browser
+// uses, so it cannot catch a rules bug; it exercises the UI, signup, the signed-delegate path and the fallback.
 //
 //   node dev/mock-world.mjs            # RPC on :3030, relayer on :8787
 //   VITE_RPC_URL=http://localhost:3030 VITE_RELAYER_URL=http://localhost:8787 npm run dev   (in web/)
@@ -10,9 +11,10 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { decodeSignedTransaction, baseEncode, PublicKey } from 'near-api-js';
+import { decodeSignedTransaction, baseEncode, KeyPair, PublicKey } from 'near-api-js';
 import { createApp } from '../src/app.ts';
-import { DEFAULT_LIMITS } from '../src/config.ts';
+import { NearChain } from '../src/chain.ts';
+import { loadConfig } from '../src/config.ts';
 import { initSync, item_names, run_dive, core_hash, rules_hash } from '../../web/src/wasm/ls_wasm.js';
 
 initSync({ module: readFileSync(new URL('../../web/src/wasm/ls_wasm_bg.wasm', import.meta.url)) });
@@ -127,7 +129,7 @@ function call(sender, method, args) {
   throw new Panic(`method ${method} is not callable in the mock`);
 }
 
-// ---- fake chain for the real relayer ----------------------------------------------------------
+// ---- chain state for the real relayer ---------------------------------------------------------
 const accounts = new Map(); // accountId -> public key string
 let txCounter = 1;
 const txId = () => `MOCKTX${String(txCounter++).padStart(6, '0')}`;
@@ -143,32 +145,37 @@ function runAction(sender, methodName, argsBytes) {
   }
 }
 
-const chain = {
-  async accountStatus(id, pk) {
-    const k = accounts.get(id);
-    return k === undefined ? 'absent' : k === pk ? 'has_key' : 'other_key';
-  },
-  async createPlayer(id, pk) {
-    accounts.set(id, pk);
-    return { txHash: txId() };
-  },
-  async relay(signed) {
-    const da = signed.delegateAction;
-    const fc = da.actions[0].functionCall;
-    const r = runAction(da.senderId, fc.methodName, fc.args);
-    return { txHash: txId(), ...r };
-  },
-  async health() {
-    return { blockHeight: 1, balanceNear: 'mock' };
-  },
-};
-
-const policy = { parentId: PARENT, worldContractId: WORLD, allowedOrigin: '*', trustProxyHops: 0, limits: { ...DEFAULT_LIMITS, signupIpMax: 1000, relayIpMax: 100000, relaySenderMax: 100000 } };
-createApp({ policy, chain }).listen(RELAYER_PORT, '127.0.0.1', () => console.log(`mock relayer on http://127.0.0.1:${RELAYER_PORT}`));
+const relayerConfig = loadConfig({
+  LASTSERVER_ACCOUNT_ID: PARENT,
+  LASTSERVER_SECRET_KEY: KeyPair.fromRandom('ed25519').toString(), // throwaway; the mock RPC accepts any studio key
+  WORLD_CONTRACT_ID: WORLD,
+  RPC_URL: `http://127.0.0.1:${RPC_PORT}`,
+  RATE_SIGNUP_IP_MAX: '1000',
+  RATE_SIGNUP_GLOBAL_MAX: '1000',
+  RATE_RELAY_IP_MAX: '100000',
+  RATE_RELAY_SENDER_MAX: '100000',
+  RATE_LOOKUP_IP_MAX: '100000',
+});
+createApp({ policy: relayerConfig, chain: new NearChain(relayerConfig) }).listen(RELAYER_PORT, '127.0.0.1', () => console.log(`mock relayer on http://127.0.0.1:${RELAYER_PORT}`));
 
 // ---- JSON-RPC ---------------------------------------------------------------------------------
 const blockHash = baseEncode(createHash('sha256').update('mock-block').digest());
 const header = () => ({ height: 1_000_000 + Math.floor(Date.now() / 1000), hash: blockHash });
+
+/** A JSON-RPC level error, in the shape testnet sends (e.g. UNKNOWN_ACCOUNT from view_account). */
+class RpcFailure extends Error {
+  constructor(error) {
+    super(error.data);
+    this.error = error;
+  }
+}
+const unknownAccount = (id, base) => new RpcFailure({
+  name: 'HANDLER_ERROR',
+  cause: { info: { block_hash: base.block_hash, block_height: base.block_height, requested_account_id: id }, name: 'UNKNOWN_ACCOUNT' },
+  code: -32000,
+  message: 'Server error',
+  data: `account ${id} does not exist while viewing`,
+});
 
 function rpc(method, params) {
   if (method === 'block') return { header: header(), chunks: [], author: 'mock' };
@@ -181,16 +188,16 @@ function rpc(method, params) {
         return { ...base, logs: [], result: [...Buffer.from(JSON.stringify(view(params.method_name, args)))] };
       }
       case 'view_access_key': {
-        // Like the real RPC: query failures come back as result.error strings.
+        // Like testnet (probe 2026-11-09): a missing key comes back as a result.error string, and
+        // so does a missing ACCOUNT ("access key ... does not exist"), so this cannot tell them apart.
         const id = params.account_id;
-        if (id !== PARENT) {
-          if (!accounts.has(id)) return { ...base, logs: [], error: `account ${id} does not exist while viewing` };
-          if (accounts.get(id) !== params.public_key) return { ...base, logs: [], error: `access key ${params.public_key} does not exist while viewing` };
+        if (id !== PARENT && accounts.get(id) !== params.public_key) {
+          return { ...base, logs: [], error: `access key ${params.public_key} does not exist while viewing` };
         }
         return { ...base, nonce: 1, permission: 'FullAccess' };
       }
       case 'view_account':
-        if (![PARENT, WORLD].includes(params.account_id) && !accounts.has(params.account_id)) return { ...base, logs: [], error: `account ${params.account_id} does not exist while viewing` };
+        if (![PARENT, WORLD].includes(params.account_id) && !accounts.has(params.account_id)) throw unknownAccount(params.account_id, base);
         return { ...base, amount: '1000000000000000000000000', locked: '0', code_hash: '11111111111111111111111111111111', storage_usage: 100, storage_paid_at: 0, global_contract_hash: null, global_contract_account_id: null };
       default: throw Object.assign(new Error('unsupported query'), { rpc: true });
     }
@@ -208,6 +215,9 @@ function rpc(method, params) {
       const da = first.signedDelegate.delegateAction;
       const fc = da.actions[0].functionCall;
       r = runAction(da.senderId, fc.methodName, fc.args);
+    } else if (first?.deleteAccount) {
+      accounts.delete(t.receiverId);
+      r = { ok: true, resultBase64: '' };
     } else if (first?.functionCall) {
       r = runAction(t.signerId, first.functionCall.methodName, first.functionCall.args);
     } else throw new Error('mock: unsupported action');
@@ -229,7 +239,8 @@ createServer((req, res) => {
     try {
       out = { jsonrpc: '2.0', id: body.id, result: rpc(body.method, Array.isArray(body.params) ? body.params : body.params ?? {}) };
     } catch (e) {
-      out = { jsonrpc: '2.0', id: body.id, error: { code: -32000, message: 'Server error', data: String(e.message), name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN', info: { error_message: String(e.message) } } } };
+      if (e instanceof RpcFailure) out = { jsonrpc: '2.0', id: body.id, error: e.error };
+      else out = { jsonrpc: '2.0', id: body.id, error: { code: -32000, message: 'Server error', data: String(e.message), name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN', info: { error_message: String(e.message) } } } };
     }
     res.writeHead(200, cors);
     res.end(JSON.stringify(out, (_, v) => (typeof v === 'bigint' ? String(v) : v)));
