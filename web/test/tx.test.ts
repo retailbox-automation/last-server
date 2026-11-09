@@ -19,10 +19,22 @@ let relayReply: { status: number; body: unknown };
 let directFailure: unknown = null;
 let directSends = 0;
 let relayCalls = 0;
+/** How many view_access_key lookups still answer "does not exist" (a key the RPC has not seen yet). */
+let missingKeyLookups = 0;
+let keyLookups = 0;
 
-function rpc(method: string): unknown {
+function rpc(method: string, params: any): unknown {
   if (method === 'block') return { header: { height: 1000, hash: HASH } };
-  if (method === 'query') return { block_height: 1000, block_hash: HASH, nonce: 1, permission: 'FullAccess' };
+  if (method === 'query') {
+    if (params?.request_type === 'view_access_key') {
+      keyLookups++;
+      if (missingKeyLookups > 0) {
+        missingKeyLookups--;
+        return { block_height: 1000, block_hash: HASH, error: `access key ${params.public_key} does not exist while viewing`, logs: [] };
+      }
+    }
+    return { block_height: 1000, block_hash: HASH, nonce: 1, permission: 'FullAccess' };
+  }
   if (method === 'send_tx') {
     directSends++;
     const status = directFailure === null ? { SuccessValue: Buffer.from('{"direct":true}').toString('base64') } : { Failure: directFailure };
@@ -36,6 +48,8 @@ beforeEach(() => {
   directFailure = null;
   directSends = 0;
   relayCalls = 0;
+  missingKeyLookups = 0;
+  keyLookups = 0;
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url.startsWith(RELAYER)) {
@@ -43,7 +57,7 @@ beforeEach(() => {
       return new Response(JSON.stringify(relayReply.body), { status: relayReply.status });
     }
     const req = JSON.parse(String(init?.body));
-    return new Response(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: rpc(req.method) }), { status: 200 });
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: rpc(req.method, req.params) }), { status: 200 });
   }) as typeof fetch;
 });
 afterEach(() => {
@@ -110,6 +124,15 @@ describe('callWorld', () => {
     await assert.rejects(callWorld(session, 'start_dive', { loadout: [] }, check), RelayerRefused);
     assert.equal(check.calls.length, 0);
     assert.equal(directSends, 0);
+  });
+
+  it('a brand-new key the RPC does not show yet: waits for it once, then signs and relays', async () => {
+    relayReply = { status: 200, body: { ok: true, txHash: 'OK2' } };
+    missingKeyLookups = 1;
+    const r = await callWorld(session, 'start_dive', { loadout: [] }, probe(done));
+    assert.equal(r.txHash, 'OK2');
+    assert.equal(relayCalls, 1);
+    assert.ok(keyLookups >= 3, String(keyLookups)); // failed lookup, optimistic + final wait, lookup of the retry
   });
 
   it('a relayed success needs no state read', async () => {

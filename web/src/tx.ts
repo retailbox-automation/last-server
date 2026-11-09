@@ -16,7 +16,7 @@ import {
   getTransactionLastResult,
 } from 'near-api-js';
 import { toBase64 } from './bytes.ts';
-import { provider } from './chain.ts';
+import { isMissingKey, provider, waitForAccessKey } from './chain.ts';
 import { config } from './config.ts';
 import type { Session } from './keys.ts';
 import { RelayerRefused, RelayerUnavailable, relay } from './relayer.ts';
@@ -51,6 +51,21 @@ function playerAccount(session: Session): Account {
   return new Account(session.accountId, provider, new KeyPairSigner(KeyPair.fromString(session.secretKey as `ed25519:${string}`)));
 }
 
+/**
+ * Runs `sign` (which reads the key's nonce before anything is sent) and, if the RPC does not know
+ * the key yet (a brand-new account), waits for it once and tries again.
+ */
+async function withFreshKey<T>(session: Session, sign: () => Promise<T>): Promise<T> {
+  try {
+    return await sign();
+  } catch (e) {
+    if (!isMissingKey(e)) throw e;
+    const publicKey = KeyPair.fromString(session.secretKey as `ed25519:${string}`).getPublicKey().toString();
+    await waitForAccessKey(session.accountId, publicKey);
+    return sign();
+  }
+}
+
 /** Text of the first failure inside a transaction outcome, or null. */
 function failureOf(outcome: any): string | null {
   const find = (status: any): string | null =>
@@ -80,11 +95,13 @@ export async function callWorld(
 
   if (config.relayerUrl !== '') {
     try {
-      const { signedDelegate } = await account.createSignedMetaTransaction({
-        receiverId: config.worldContractId,
-        actions: [actions.functionCall(method, args, GAS_100_TGAS, 0n)],
-        blockHeightTtl: DELEGATE_TTL_BLOCKS,
-      });
+      const { signedDelegate } = await withFreshKey(session, () =>
+        account.createSignedMetaTransaction({
+          receiverId: config.worldContractId,
+          actions: [actions.functionCall(method, args, GAS_100_TGAS, 0n)],
+          blockHeightTtl: DELEGATE_TTL_BLOCKS,
+        }),
+      );
       const ok = await relay(toBase64(encodeSignedDelegate(signedDelegate)));
       return { txHash: ok.txHash, via: 'relayer', result: ok.result };
     } catch (e) {
@@ -103,7 +120,8 @@ export async function callWorld(
   }
 
   try {
-    return await callDirect(account, method, args);
+    // A missing key fails while reading the nonce, before anything is sent: safe to retry.
+    return await withFreshKey(session, () => callDirect(account, method, args));
   } catch (e) {
     // A relayed attempt still in flight can land first; then this direct one is refused.
     if (e instanceof CallFailed) {

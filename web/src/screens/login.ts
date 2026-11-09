@@ -1,4 +1,4 @@
-import { accountExists } from '../chain.ts';
+import { accountExists, waitForAccessKey } from '../chain.ts';
 import { config, nameProblem } from '../config.ts';
 import { h } from '../dom.ts';
 import { KeyPair } from 'near-api-js';
@@ -41,6 +41,8 @@ async function signIn(name: string): Promise<Session> {
   }
   const session: Session = { name, accountId, secretKey: key.toString() };
   saveSession(session);
+  // The first Dive signs right away and needs the key's nonce: wait until the RPC sees the new key.
+  await waitForAccessKey(accountId, key.getPublicKey().toString());
   return session;
 }
 
