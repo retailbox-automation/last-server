@@ -26,6 +26,28 @@ export interface DiveScreenOptions {
   onFinish: (f: DiveFinish) => void;
 }
 
+/**
+ * Replays a move log without a screen: what ending the dive at this point records. The contract
+ * replays the same log, so this cannot hide a death that the log contains.
+ */
+export function replayFinish(base: DiveBase, moves: Uint8Array): DiveFinish {
+  const sim = new DiveSession(BigInt(base.ticket.seed), base.entry);
+  try {
+    const applied: number[] = [];
+    const history: GameEvent[] = [];
+    for (const mv of moves) {
+      const step = sim.step(mv);
+      if (!step.applied) break;
+      applied.push(mv);
+      history.push(...step.events);
+    }
+    const local = sim.outcome();
+    return { moves: Uint8Array.from(applied), local, history, reason: local.died ? 'died' : 'returned' };
+  } finally {
+    sim.free();
+  }
+}
+
 const KEYS: Record<string, number> = {
   ArrowUp: MOVE.up, w: MOVE.up, W: MOVE.up,
   ArrowDown: MOVE.down, s: MOVE.down, S: MOVE.down,

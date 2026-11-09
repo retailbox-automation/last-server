@@ -16,6 +16,8 @@ export interface Flash {
 export interface SurfaceActions {
   onDive: (loadout: Array<[string, number]>) => void;
   onContinue: (ticket: DiveTicket, saved: { saved: SavedDive; moves: Uint8Array } | null) => void;
+  /** Settle the open dive right away with the moves this browser has (none: an empty log). */
+  onEnd: (ticket: DiveTicket, saved: { saved: SavedDive; moves: Uint8Array } | null) => void;
   onSwitchPlayer: () => void;
 }
 
@@ -93,7 +95,12 @@ export function surfaceScreen(session: Session, actions: SurfaceActions, flash?:
         h('p', {}, saved
           ? `You are ${saved.moves.length} moves in. Everything you took down stays locked until the dive is recorded.`
           : 'This browser has no record of those moves, so the dive restarts from its first step. Your locked items stay locked until a dive is recorded.'),
-        h('button', { class: 'primary', type: 'button', onclick: () => actions.onContinue(active, saved) }, saved ? 'Continue the dive' : 'Restart the dive')));
+        h('p', { class: 'muted small' }, saved
+          ? 'Or end it here: the contract records the moves so far, a death included.'
+          : 'Or end it here: with no moves recorded you come back with what you took down and nothing more.'),
+        h('div', { class: 'row' },
+          h('button', { class: 'primary', type: 'button', onclick: () => actions.onContinue(active, saved) }, saved ? 'Continue the dive' : 'Restart the dive'),
+          h('button', { type: 'button', onclick: () => actions.onEnd(active, saved) }, 'End the dive here'))));
     } else {
       const free = available(me);
       const picks = new Map<string, number>();

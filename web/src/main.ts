@@ -5,7 +5,7 @@ import type { DiveBase, StartInfo } from './divelog.ts';
 import { h, mount } from './dom.ts';
 import { forgetLast, lastName } from './keys.ts';
 import type { Session } from './keys.ts';
-import { diveScreen } from './screens/dive.ts';
+import { diveScreen, replayFinish } from './screens/dive.ts';
 import type { DiveFinish } from './screens/dive.ts';
 import { loginScreen } from './screens/login.ts';
 import { resultScreen } from './screens/result.ts';
@@ -44,6 +44,7 @@ function showSurface(session: Session, flash?: Flash): void {
       {
         onDive: (loadout) => void beginDive(session, loadout),
         onContinue: (ticket, saved) => void resumeDive(session, ticket, saved),
+        onEnd: (ticket, saved) => void endDive(session, ticket, saved),
         onSwitchPlayer: () => { forgetLast(); showLogin(); },
       },
       flash,
@@ -98,6 +99,23 @@ async function resumeDive(session: Session, ticket: DiveTicket, saved: { saved: 
   }
 }
 
+/** Records an open dive without playing on: the saved moves, or an empty log if this browser has none. */
+async function endDive(session: Session, ticket: DiveTicket, saved: { saved: SavedDive; moves: Uint8Array } | null): Promise<void> {
+  busy('Reading your dive...');
+  let graves: GraveView[];
+  let base: DiveBase;
+  let finish: DiveFinish;
+  try {
+    graves = await allGraves();
+    base = saved ? saved.saved : { ticket, entry: (await entryFor(session)).entry, start: null };
+    finish = replayFinish(base, saved ? saved.moves : new Uint8Array());
+  } catch (e) {
+    showSurface(session, { kind: 'bad', text: `Could not read the dive: ${(e as Error).message}` });
+    return;
+  }
+  await record(session, ticket, graves, finish, base.start);
+}
+
 function runDive(session: Session, base: DiveBase, graves: GraveView[], resume: Uint8Array): void {
   mount(root, diveScreen({
     session, base, graves, resume,
@@ -113,7 +131,7 @@ async function record(session: Session, ticket: DiveTicket, graves: GraveView[],
     mount(root, resultScreen({ start, settle: call, chain: outcome, finish, graves }, () => showSurface(session, {
       kind: 'good',
       text: 'Dive recorded.',
-      links: [{ label: 'View transaction', url: explorerTxUrl(call.txHash) }],
+      links: call.txHash ? [{ label: 'View transaction', url: explorerTxUrl(call.txHash) }] : [],
     })), footer());
   } catch (e) {
     mount(root,
