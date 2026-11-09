@@ -21,6 +21,10 @@ import { SURFACE_NOW, graveFor, lootGrave } from './grave_bot.mjs';
 const relayerDir = new URL('../relayer/', import.meta.url);
 const near = await import(new URL('node_modules/near-api-js/lib/index.js', relayerDir).href);
 const { Account, JsonRpcProvider, KeyPair, KeyPairSigner, actions, encodeSignedDelegate } = near;
+const { AccessKeyDoesNotExistError, AccountDoesNotExistError } = await import(new URL('node_modules/near-api-js/lib/rpc-errors/index.js', relayerDir).href);
+const missingKey = (e) => e instanceof AccessKeyDoesNotExistError || e instanceof AccountDoesNotExistError;
+/** Public keys are not secret, but they are noise in a log: show the shape, not the value. */
+const mask = (text) => String(text).replace(/ed25519:[1-9A-HJ-NP-Za-km-z]+/g, 'ed25519:<masked>');
 
 const env = process.env;
 const need = (k) => { if (!env[k]) { console.error(`missing env ${k}`); process.exit(2); } return env[k]; };
@@ -69,6 +73,26 @@ const explorer = (h) => `https://testnet.nearblocks.io/txns/${h}`;
 
 const players = []; // accounts this run created; deleted at the end so their NEAR returns to the studio
 
+/**
+ * A key added a moment ago can be unknown to the RPC node that answers next (seen 2026-11-09 on
+ * test.rpc.fastnear.com: signing right after signup failed with "Access key ... does not exist").
+ * Wait until it shows at optimistic, then final finality: every 0.75 s, up to 15 s.
+ */
+async function waitForKey(accountId, publicKey) {
+  const deadline = Date.now() + 15_000;
+  for (const finality of ['optimistic', 'final']) {
+    for (;;) {
+      try {
+        await provider.viewAccessKey({ accountId, publicKey, finalityQuery: { finality } });
+        break;
+      } catch (e) {
+        if (Date.now() >= deadline) throw new Error(`the key of ${accountId} is not visible at ${finality} finality after 15 s: ${mask(e.message)}`);
+        await new Promise((r) => setTimeout(r, 750));
+      }
+    }
+  }
+}
+
 /** Signs up a fresh player through the relayer; returns { accountId, delegate(method, args, ...) }. */
 async function newPlayer(prefix) {
   const name = `${prefix}-${Date.now().toString(36)}`;
@@ -79,11 +103,22 @@ async function newPlayer(prefix) {
   if (su.status !== 200) throw new Error('signup failed');
   const player = new Account(accountId, provider, new KeyPairSigner(key));
   players.push(player);
+  const t0 = Date.now();
+  await waitForKey(accountId, key.getPublicKey());
+  check(true, `${accountId}: key visible to the RPC (optimistic and final)`, `${Date.now() - t0} ms`);
+  const sign = (method, args, gas, receiver, deposit, blockHeightTtl) =>
+    player.createSignedMetaTransaction({ receiverId: receiver, actions: [actions.functionCall(method, args, gas, deposit)], blockHeightTtl });
   const delegate = async (method, args, gas = 100_000_000_000_000n, receiver = world, deposit = 0n, blockHeightTtl = 100) => {
-    const { signedDelegate } = await player.createSignedMetaTransaction({
-      receiverId: receiver, actions: [actions.functionCall(method, args, gas, deposit)], blockHeightTtl,
-    });
-    return Buffer.from(encodeSignedDelegate(signedDelegate)).toString('base64');
+    let signed;
+    try {
+      signed = await sign(method, args, gas, receiver, deposit, blockHeightTtl);
+    } catch (e) {
+      if (!missingKey(e)) throw e;
+      // Same race as above, on a different RPC node: wait once more, then one retry.
+      await waitForKey(accountId, key.getPublicKey());
+      signed = await sign(method, args, gas, receiver, deposit, blockHeightTtl);
+    }
+    return Buffer.from(encodeSignedDelegate(signed.signedDelegate)).toString('base64');
   };
   return { name, key, accountId, delegate };
 }
@@ -205,7 +240,7 @@ try {
   }
 } catch (e) {
   failures++;
-  console.error('ABORTED:', e.message);
+  console.error('ABORTED:', mask(e.message));
 } finally {
   // Each signup moved SIGNUP_FUNDING_NEAR from the studio; give what is left back (E2E_KEEP_ACCOUNTS=1 keeps them).
   if (!env.E2E_KEEP_ACCOUNTS) {
@@ -214,7 +249,7 @@ try {
         const r = await p.deleteAccount(parent);
         check(true, `deleted ${p.accountId}, NEAR back to ${parent}`, explorer(r.transaction_outcome.id));
       } catch (e) {
-        check(false, `delete ${p.accountId}`, String(e.message).slice(0, 160));
+        check(false, `delete ${p.accountId}`, mask(e.message).slice(0, 160));
       }
     }
   }
