@@ -13,7 +13,7 @@ Built at NEAR HACKATHON 2026 (track: Games With Real Economies). Work in progres
 
 ## Status
 
-Day 1 (2026-11-07): repository, design, gas spike. Nothing here is playable yet. This section will be replaced by "do X — see Y" steps as features land.
+Core v1 (2026-11-09): rules crate, world contract, relayer and web client are built and pass their tests against a local sandbox and a mock chain; the end-to-end run on NEAR testnet is next. Step-by-step "do X — see Y" instructions will replace this section once that run passes.
 
 ## Platform findings (measured, day 1)
 
@@ -35,6 +35,7 @@ Day 1 (2026-11-07): repository, design, gas spike. Nothing here is playable yet.
 ## Limits
 
 - Storage for the player and balance records of new accounts is paid by the world contract (`start_dive` comes through the relayer with zero deposit). This is deliberate on testnet.
+- Gas: the worst measured 300-move dive with 100 graves on depths 1 to 10 costs 9.41 Tgas ([docs/spike/GAS-RESULTS-V1.md](docs/spike/GAS-RESULTS-V1.md)). Looting drives the cost (about 0.10 Tgas per looted grave, 0.02 Tgas per grave read, estimated from those rows), so a dive that loots close to the per-dive cap of 50 graves would cost about 11.5 Tgas (estimate, not measured). The client attaches 100 Tgas per call.
 
 ## Network
 
@@ -42,7 +43,7 @@ NEAR testnet only. No mainnet, no real money.
 
 ## Our other NEAR Hackathon project
 
-The same team submits one more, independent project: **Context Firewall** (track: Privacy & Private AI). Its repository link will be added here when it is public.
+The same team submits one more, independent project: [Context Firewall](https://github.com/retailbox-automation/context-firewall) (track: Privacy & Private AI). It keeps card numbers, tax IDs, API keys and one-time codes out of what an AI agent's model sees. The two projects share no code.
 
 ## License
 
