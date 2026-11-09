@@ -1,14 +1,21 @@
 #!/usr/bin/env node
 // End-to-end check against a LIVE testnet world contract, through the real relayer code:
-//   sign up a fresh player -> start_dive -> settle_dive (both as NEP-366 signed delegates) -> read the result back over RPC.
-// Run by whoever holds the studio key (lane NEARLS); it spends a little testnet NEAR (account funding + gas).
+//   contract core_version == the web's wasm rules -> sign up player A -> start_dive -> settle_dive with a
+//   move log that dies holding loot (both as NEP-366 signed delegates) -> A's grave is on the chain ->
+//   sign up player B -> B's dive walks to that grave and loots it -> read everything back over RPC.
+// Run by whoever holds the studio key (lane NEARLS); it spends a little testnet NEAR (2 accounts x
+// SIGNUP_FUNDING_NEAR + gas). The move logs come from scripts/grave_bot.mjs on the web's wasm rules; if
+// they find no plan on today's map, the script says so (TODO) and runs a plain dive instead.
 //
-//   cd relayer && npm ci && cd ..
+//   cd relayer && npm ci && cd ../web && npm ci && npm run build && cd ..      # build makes web/src/wasm
 //   LASTSERVER_ACCOUNT_ID=lastserver.testnet LASTSERVER_SECRET_KEY=ed25519:... \
 //   WORLD_CONTRACT_ID=world.lastserver.testnet [RPC_URL=...] [RELAYER_URL=http://host:8787] node scripts/e2e_testnet.mjs
 //
 // Without RELAYER_URL the script starts the relayer in this process (same env vars). Exit code 0 = all checks passed.
 // Expected contract API: SPEC-CORE-V1 section A (start_dive, settle_dive, active_dive, player, current_day).
+
+import { readFileSync } from 'node:fs';
+import { dieWithLoot, lootGrave } from './grave_bot.mjs';
 
 const relayerDir = new URL('../relayer/', import.meta.url);
 const near = await import(new URL('node_modules/near-api-js/lib/index.js', relayerDir).href);
@@ -23,6 +30,20 @@ const provider = new JsonRpcProvider({ url: rpcUrl });
 
 let failures = 0;
 const check = (ok, label, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${extra ? '  ' + extra : ''}`); if (!ok) failures++; };
+const todos = [];
+const todo = (label) => { console.log(`TODO  ${label}`); todos.push(label); };
+
+// The web's rules (wasm built by `npm run build` in web/): hashes for core_version and the move-log bots.
+const wasmDir = new URL('../web/src/wasm/', import.meta.url);
+let w = null;
+let wasmError = '';
+try {
+  w = await import(new URL('ls_wasm.js', wasmDir).href);
+  w.initSync({ module: readFileSync(new URL('ls_wasm_bg.wasm', wasmDir)) });
+} catch (e) {
+  w = null;
+  wasmError = e.message;
+}
 
 let base = env.RELAYER_URL;
 let server = null;
@@ -45,29 +66,70 @@ const view = (method, args = {}) => provider.callFunction({ contractId: world, m
 const b64json = (s) => JSON.parse(Buffer.from(s, 'base64').toString('utf8'));
 const explorer = (h) => `https://testnet.nearblocks.io/txns/${h}`;
 
-try {
-  const health = await (await fetch(base + '/health')).json();
-  check(health.ok === true, 'relayer /health', `block ${health.blockHeight}, studio balance ${health.balanceNear} NEAR`);
+const players = []; // accounts this run created; deleted at the end so their NEAR returns to the studio
 
-  // 1. sign up
-  const name = `e2e-${Date.now().toString(36)}`;
+/** Signs up a fresh player through the relayer; returns { accountId, delegate(method, args, ...) }. */
+async function newPlayer(prefix) {
+  const name = `${prefix}-${Date.now().toString(36)}`;
   const key = KeyPair.fromRandom('ed25519');
   const accountId = `${name}.${parent}`;
   const su = await post('/signup', { name, publicKey: key.getPublicKey().toString() });
   check(su.status === 200 && su.json.created === true, `signup ${accountId}`, su.json?.txHash ? explorer(su.json.txHash) : JSON.stringify(su.json));
   if (su.status !== 200) throw new Error('signup failed');
-  const again = await post('/signup', { name, publicKey: key.getPublicKey().toString() });
-  check(again.status === 200 && again.json.created === false, 'signup is idempotent for the same key');
-  const taken = await post('/signup', { name, publicKey: KeyPair.fromRandom('ed25519').getPublicKey().toString() });
-  check(taken.status === 409, 'signup with another key for the same name -> 409');
-
   const player = new Account(accountId, provider, new KeyPairSigner(key));
-  const delegate = async (method, args, gas = 100_000_000_000_000n, receiver = world, deposit = 0n) => {
+  players.push(player);
+  const delegate = async (method, args, gas = 100_000_000_000_000n, receiver = world, deposit = 0n, blockHeightTtl = 100) => {
     const { signedDelegate } = await player.createSignedMetaTransaction({
-      receiverId: receiver, actions: [actions.functionCall(method, args, gas, deposit)], blockHeightTtl: 100,
+      receiverId: receiver, actions: [actions.functionCall(method, args, gas, deposit)], blockHeightTtl,
     });
     return Buffer.from(encodeSignedDelegate(signedDelegate)).toString('base64');
   };
+  return { name, key, accountId, delegate };
+}
+
+/** start_dive with an empty loadout; returns the ticket and the entry the contract will replay. */
+async function startDive(p, label) {
+  const start = await post('/relay', { signedDelegate: await p.delegate('start_dive', { loadout: [] }) });
+  check(start.status === 200, `${label}: start_dive relayed`, start.json?.txHash ? explorer(start.json.txHash) : JSON.stringify(start.json));
+  if (start.status !== 200) throw new Error('start_dive failed');
+  const ticket = start.json.resultBase64 ? b64json(start.json.resultBase64) : await view('active_dive', { account_id: p.accountId });
+  check(ticket && ticket.dive_id !== undefined, `${label}: contract returned a dive ticket`, JSON.stringify(ticket));
+  const entry = await view('dive_entry', { account_id: p.accountId });
+  return { ticket, entry };
+}
+
+async function settleDive(p, ticket, moves, label) {
+  const settle = await post('/relay', { signedDelegate: await p.delegate('settle_dive', { dive_id: String(ticket.dive_id), moves: Buffer.from(moves).toString('base64') }) });
+  check(settle.status === 200, `${label}: settle_dive relayed`, settle.json?.txHash ? explorer(settle.json.txHash) : JSON.stringify(settle.json));
+  const outcome = settle.json?.resultBase64 ? b64json(settle.json.resultBase64) : null;
+  check(outcome !== null && typeof outcome.died === 'boolean', `${label}: contract returned a dive outcome`, JSON.stringify(outcome)?.slice(0, 200));
+  return outcome;
+}
+
+/** What a player sees of a dive; equal on both sides = the web replays the dive like the contract. */
+const digest = (o) => JSON.stringify([o.died, o.final_depth, o.picked, o.looted_graves, o.dropped_into_grave, o.burned]);
+const PLAIN_MOVES = Uint8Array.from(Array.from({ length: 200 }, (_, i) => [3, 3, 1, 1, 2, 4, 0, 5][i % 8]));
+
+try {
+  const health = await (await fetch(base + '/health')).json();
+  check(health.ok === true && health.funds === 'ok', 'relayer /health (studio can fund signups)', `block ${health.blockHeight}, funds ${health.funds}`);
+
+  // 0. the contract and the page run the same rules
+  const cv = await view('core_version');
+  if (w === null) {
+    check(false, 'core_version matches the web wasm', `web/src/wasm not loadable (${wasmError}); run npm run build in web/`);
+  } else {
+    check(cv.rules_sha256 === w.rules_hash() && cv.core_sha256 === w.core_hash(), 'core_version matches the web wasm',
+      `contract rules ${cv.rules_sha256?.slice(0, 12)} core ${cv.core_sha256?.slice(0, 12)}; web rules ${w.rules_hash().slice(0, 12)} core ${w.core_hash().slice(0, 12)}`);
+  }
+
+  // 1. sign up player A
+  const a = await newPlayer('e2e');
+  const { accountId, delegate } = a;
+  const again = await post('/signup', { name: a.name, publicKey: a.key.getPublicKey().toString() });
+  check(again.status === 200 && again.json.created === false, 'signup is idempotent for the same key');
+  const taken = await post('/signup', { name: a.name, publicKey: KeyPair.fromRandom('ed25519').getPublicKey().toString() });
+  check(taken.status === 409, 'signup with another key for the same name -> 409');
 
   // 2. the relayer refuses what it must refuse (no chain traffic)
   for (const [label, d, code] of [
@@ -75,39 +137,78 @@ try {
     ['wrong receiver', await delegate('start_dive', {}, 100_000_000_000_000n, 'other.testnet'), 'wrong_receiver'],
     ['deposit', await delegate('start_dive', {}, 100_000_000_000_000n, world, 1n), 'deposit_not_allowed'],
     ['gas over 100 Tgas', await delegate('start_dive', {}, 200_000_000_000_000n), 'gas_too_high'],
+    ['a delegate valid for 10000 blocks', await delegate('start_dive', { loadout: [] }, 100_000_000_000_000n, world, 0n, 10_000), 'delegate_ttl_too_long'],
   ]) {
     const r = await post('/relay', { signedDelegate: d });
     check(r.status === 403 && r.json?.error?.code === code, `relay refuses ${label}`, `${r.status} ${r.json?.error?.code}`);
   }
 
   // 3. start_dive through the relayer
-  const start = await post('/relay', { signedDelegate: await delegate('start_dive', { loadout: [] }) });
-  check(start.status === 200, 'start_dive relayed', start.json?.txHash ? explorer(start.json.txHash) : JSON.stringify(start.json));
-  if (start.status !== 200) throw new Error('start_dive failed');
-  const ticket = start.json.resultBase64 ? b64json(start.json.resultBase64) : await view('active_dive', { account_id: accountId });
-  check(ticket && ticket.dive_id !== undefined, 'contract returned a dive ticket', JSON.stringify(ticket));
+  const { ticket, entry } = await startDive(a, 'A');
   const active = await view('active_dive', { account_id: accountId });
   check(active && String(active.dive_id) === String(ticket.dive_id), 'active_dive view shows the ticket');
 
-  // 4. settle_dive through the relayer, with a plain move log
-  const moves = Buffer.from(Array.from({ length: 200 }, (_, i) => [3, 3, 1, 1, 2, 4, 0, 5][i % 8]));
-  const settle = await post('/relay', { signedDelegate: await delegate('settle_dive', { dive_id: String(ticket.dive_id), moves: moves.toString('base64') }) });
-  check(settle.status === 200, 'settle_dive relayed', settle.json?.txHash ? explorer(settle.json.txHash) : JSON.stringify(settle.json));
-  const outcome = settle.json?.resultBase64 ? b64json(settle.json.resultBase64) : null;
-  check(outcome !== null && typeof outcome.died === 'boolean', 'contract returned a dive outcome', JSON.stringify(outcome));
+  // 4. settle_dive through the relayer: a log that dies holding loot (or a plain log if no plan)
+  const plan = w ? dieWithLoot(w, ticket.seed, entry) : null;
+  if (!plan) todo(`grave path: no "pick up, then die" plan on today's map for A (seed ${ticket.seed}); plain dive instead, grave path not tested`);
+  const moves = plan ? plan.moves : PLAIN_MOVES;
+  const outcome = await settleDive(a, ticket, moves, 'A');
+  if (plan && outcome) {
+    check(digest(outcome) === digest(plan.outcome), 'A: contract outcome equals the web wasm replay of the same log',
+      `contract ${digest(outcome)} web ${digest(plan.outcome)}`.slice(0, 300));
+  }
 
   // 5. read back over RPC
   const after = await view('active_dive', { account_id: accountId });
   check(after === null || after === undefined, 'no active dive after settle');
   const me = await view('player', { account_id: accountId });
   check(me && Number(me.dives) === 1, 'player view counts one dive', JSON.stringify(me));
-  const replay = await post('/relay', { signedDelegate: await delegate('settle_dive', { dive_id: String(ticket.dive_id), moves: moves.toString('base64') }) });
+  const replay = await post('/relay', { signedDelegate: await delegate('settle_dive', { dive_id: String(ticket.dive_id), moves: Buffer.from(moves).toString('base64') }) });
   check(replay.status === 422, 'second settle of the same dive fails on the contract (422 call_failed)', `${replay.status} ${replay.json?.error?.message ?? ''}`.slice(0, 160));
+
+  // 6. the grave path: A's grave is on the chain, player B walks to it and takes it
+  if (plan && outcome?.died) {
+    check(Number(me.deaths) === 1, 'player view counts the death', JSON.stringify(me));
+    const here = await view('graves', { depth: outcome.final_depth });
+    const grave = here.find((g) => g.owner_id === accountId && String(g.dive_id) === String(ticket.dive_id));
+    check(grave !== undefined, `A's grave is listed at depth ${outcome.final_depth}`, JSON.stringify(grave ?? here.length));
+    if (grave) {
+      const b = await newPlayer('e2e-b');
+      const bDive = await startDive(b, 'B');
+      const route = lootGrave(w, bDive.ticket.seed, bDive.entry, grave.id);
+      if (!route) {
+        todo(`grave path: no safe route to grave ${grave.id} for B (seed ${bDive.ticket.seed}); B settles an empty dive instead`);
+        await settleDive(b, bDive.ticket, new Uint8Array(), 'B');
+      } else {
+        const bOut = await settleDive(b, bDive.ticket, route.moves, 'B');
+        check(bOut && bOut.looted_graves.includes(grave.id) && !bOut.died, `B looted grave ${grave.id} and came back`, JSON.stringify(bOut?.looted_graves));
+        check(bOut && digest(bOut) === digest(route.outcome), 'B: contract outcome equals the web wasm replay of the same log');
+        const left = await view('graves', { depth: grave.depth });
+        check(!left.some((g) => g.id === grave.id), 'the grave is gone from the graves view');
+        const stash = new Map((await view('player', { account_id: b.accountId })).stash.map(([t, n]) => [t, BigInt(n)]));
+        check(grave.items.every(([t, n]) => (stash.get(t) ?? 0n) >= BigInt(n)), "B's stash holds what the grave held", JSON.stringify([...stash]));
+      }
+    }
+  } else if (plan) {
+    todo('grave path: A survived on the contract although the web run died; see the outcome comparison above');
+  }
 } catch (e) {
   failures++;
   console.error('ABORTED:', e.message);
 } finally {
+  // Each signup moved SIGNUP_FUNDING_NEAR from the studio; give what is left back (E2E_KEEP_ACCOUNTS=1 keeps them).
+  if (!env.E2E_KEEP_ACCOUNTS) {
+    for (const p of players) {
+      try {
+        const r = await p.deleteAccount(parent);
+        check(true, `deleted ${p.accountId}, NEAR back to ${parent}`, explorer(r.transaction_outcome.id));
+      } catch (e) {
+        check(false, `delete ${p.accountId}`, String(e.message).slice(0, 160));
+      }
+    }
+  }
   server?.close();
 }
+if (todos.length > 0) console.log(`\n${todos.length} TODO (not tested this run): ${todos.join(' | ')}`);
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
