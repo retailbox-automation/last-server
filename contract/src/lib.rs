@@ -5,8 +5,8 @@
 //! moves)` re-runs `ls_core` on that seed and the move log, then applies the outcome: finds are
 //! minted, looted graves move to the player, used-up and broken items burn, and on death what the
 //! player carried becomes a grave at that depth for anyone to loot. A dive left open past its day
-//! can be expired by anyone once `rules::EXPIRE_GRACE_SECONDS` have passed since its start: its
-//! loadout becomes a grave at the start depth.
+//! can be expired by anyone once `rules::EXPIRE_GRACE_SECONDS` have passed since its start: like
+//! a quit, its loadout pays the death toll and the rest becomes a grave at the start depth.
 //!
 //! Graves are stored per depth (`LookupMap<depth, Vec<GraveRecord>>`, at most
 //! `rules::GRAVES_PER_DEPTH` each, the oldest crumbles), and `settle_dive` reads only the depths
@@ -19,7 +19,7 @@
 //! cannot be transferred until the dive is settled or expired. Without storage deposits the
 //! contract pays for every balance entry, so items go only to accounts that have started a dive.
 
-use ls_core::rules::{EXPIRE_GRACE_SECONDS, GRAVES_PER_DEPTH};
+use ls_core::rules::{DEATH_TOLL_GOLD_DIV, EXPIRE_GRACE_SECONDS, GRAVES_PER_DEPTH};
 use ls_core::{DiveEntry, DiveOutcome, Grave, GraveSource, ItemId, MAX_MOVES, START_DEPTH};
 use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::serde::Serialize;
@@ -369,7 +369,7 @@ impl Contract {
 
     /// Anyone may end a dive left open past its day, once `EXPIRE_GRACE_SECONDS` have passed
     /// since it started: it counts as a death, and the loadout becomes a grave at the start depth
-    /// (position from the seed). No death toll.
+    /// (position from the seed), minus the death toll, as for a quit.
     pub fn expire_dive(&mut self, account_id: AccountId) {
         let dive = self.active.get(&account_id).cloned().unwrap_or_else(|| env::panic_str("no active dive for this account"));
         if let Some(why) = expire_refusal(&dive, env::block_timestamp()) {
@@ -379,16 +379,24 @@ impl Contract {
         self.active.remove(&account_id);
         self.unlock(&account_id, &dive.loadout);
         let mut grave_id = None;
-        if !dive.loadout.is_empty() {
+        let (grave, toll) = expire_split(&dive.loadout);
+        if !toll.is_empty() {
+            let items = named_u128(&toll);
+            for (token, amount) in &items {
+                self.burn(token, &account_id, *amount);
+            }
+            emit_burn(&account_id, &items, Some("death toll"));
+        }
+        if !grave.is_empty() {
             let me = env::current_account_id();
-            let items = named_u128(&dive.loadout);
+            let items = named_u128(&grave);
             for (token, amount) in &items {
                 self.economy_mut(token).to_graves += amount;
             }
             self.move_tokens(&account_id, &me, &items);
             emit_transfer(&account_id, &me, &items, Some("expired dive"));
             let (x, y) = ls_core::expired_grave_spot(dive.seed, dive.dive_id);
-            grave_id = Some(self.add_grave(&account_id, dive.start_depth, x, y, dive.loadout.clone(), today, dive.dive_id));
+            grave_id = Some(self.add_grave(&account_id, dive.start_depth, x, y, grave, today, dive.dive_id));
         }
         self.player_mut(&account_id).deaths += 1;
         self.day_mut(dive.day).deaths += 1;
@@ -760,6 +768,19 @@ fn expire_refusal(dive: &ActiveDive, now: u64) -> Option<String> {
     None
 }
 
+/// What an expired dive's loadout becomes, `(grave, burned)`: the same as a quit in ls-core
+/// (`DiveSim::outcome`), one gold in `DEATH_TOLL_GOLD_DIV` burned and the rest in the grave.
+/// Without the toll, waiting for someone to expire the dive would be cheaper than quitting.
+fn expire_split(loadout: &[(ItemId, u32)]) -> (Vec<(ItemId, u32)>, Vec<(ItemId, u32)>) {
+    let (mut grave, mut toll) = (Vec::new(), Vec::new());
+    for &(id, n) in loadout {
+        let t = if id == ls_core::ITEM_GOLD { n / DEATH_TOLL_GOLD_DIV } else { 0 };
+        ls_core::add_item(&mut toll, id, t);
+        ls_core::add_item(&mut grave, id, n - t);
+    }
+    (grave, toll)
+}
+
 fn ticket_of(d: &ActiveDive) -> DiveTicket {
     DiveTicket { dive_id: U64(d.dive_id), day: d.day, seed: U64(d.seed), start_depth: d.start_depth }
 }
@@ -1050,5 +1071,26 @@ mod tests {
         let ready = late.started_at + EXPIRE_GRACE_SECONDS * S;
         assert!(expire_refusal(&late, ready - S).is_some());
         assert_eq!(expire_refusal(&late, ready), None);
+    }
+
+    /// An expired dive pays what a quit pays: the grave and the burn equal what the rules give for
+    /// an empty log (a quit at the start) with the same loadout.
+    #[test]
+    fn an_expired_dive_pays_the_death_toll_like_a_quit() {
+        use ls_core::{ITEM_BLADE, ITEM_GEM, ITEM_GOLD, ITEM_PLATE, ITEM_POTION};
+        let loadouts = [
+            vec![(ITEM_GOLD, 57), (ITEM_BLADE, 2)],
+            vec![(ITEM_GOLD, 9)],
+            vec![(ITEM_PLATE, 1)],
+            vec![(ITEM_POTION, 4), (ITEM_GOLD, 1_000_003), (ITEM_GEM, 1)],
+            vec![],
+        ];
+        for loadout in loadouts {
+            let entry = DiveEntry { start_depth: START_DEPTH, inventory: loadout.clone(), graves: vec![] };
+            let quit = ls_core::run_dive(7, &entry, &[]);
+            assert!(quit.quit && quit.died);
+            assert_eq!(expire_split(&loadout), (quit.dropped_into_grave, quit.burned), "{loadout:?}");
+        }
+        assert_eq!(expire_split(&[(ITEM_GOLD, 57)]), (vec![(ITEM_GOLD, 52)], vec![(ITEM_GOLD, 5)]));
     }
 }

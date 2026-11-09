@@ -1,6 +1,6 @@
 extern crate std;
 
-use super::bot::{generate_moves, Style};
+use super::bot::{generate_moves, moves_to_quit_at, safe_grave_spots, Style};
 use super::*;
 use std::vec;
 
@@ -790,4 +790,78 @@ fn the_way_up_returns_to_the_surface() {
     assert!(out.returned && !out.died && !out.quit, "{out:?}");
     assert!(out.death_pos.is_none() && out.dropped_into_grave.is_empty() && out.burned.is_empty());
     assert_eq!(out.moves_applied, 4);
+}
+
+/// Tiles reachable from a level's start without entering `blocked` (stairs count, are not crossed).
+fn reachable_without(l: &Level, blocked: &[(i32, i32)]) -> std::vec::Vec<bool> {
+    let mut seen = vec![false; (W * H) as usize];
+    let mut queue = vec![l.start];
+    seen[(l.start.1 * W + l.start.0) as usize] = true;
+    while let Some((x, y)) = queue.pop() {
+        if l.tile(x, y) == STAIRS {
+            continue;
+        }
+        for (dx, dy) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
+            let (nx, ny) = (x + dx, y + dy);
+            if l.passable(nx, ny) && !blocked.contains(&(nx, ny)) && !seen[(ny * W + nx) as usize] {
+                seen[(ny * W + nx) as usize] = true;
+                queue.push((nx, ny));
+            }
+        }
+    }
+    seen
+}
+
+/// The gas benchmark's grave spots never cut a map apart: with all of them taken every other tile
+/// reachable from the start still is (the stairs too), and no two spots touch.
+#[test]
+fn safe_grave_spots_never_cut_the_map() {
+    for seed in 0..200u64 {
+        for depth in 1..=10u32 {
+            let l = generate_level(seed, depth, &[]);
+            let spots = safe_grave_spots(seed, depth, rules::GRAVES_PER_DEPTH as usize);
+            assert_eq!(spots.len(), rules::GRAVES_PER_DEPTH as usize, "seed {seed} depth {depth}");
+            let blocked: std::vec::Vec<(i32, i32)> = spots.iter().map(|&(x, y)| (i32::from(x), i32::from(y))).collect();
+            let before = reachable_without(&l, &[]);
+            let after = reachable_without(&l, &blocked);
+            for i in 0..(W * H) as usize {
+                let cell = (i as i32 % W, i as i32 / W);
+                if blocked.contains(&cell) {
+                    assert!(before[i] && l.tile(cell.0, cell.1) == FLOOR && cell != l.start, "seed {seed} depth {depth} {cell:?}");
+                } else {
+                    assert_eq!(before[i], after[i], "seed {seed} depth {depth}: {cell:?} cut off");
+                }
+            }
+            for (a, &p) in blocked.iter().enumerate() {
+                assert!(blocked[a + 1..].iter().all(|&q| (p.0 - q.0).abs() > 1 || (p.1 - q.1).abs() > 1), "seed {seed} depth {depth}: spots touch");
+            }
+        }
+    }
+}
+
+/// The filling bot of the gas benchmark: for every spot of depths 10 down to 1, with the graves
+/// placed so far in the entry, a log ends on the spot (a quit there, or a death on it), so the
+/// grave lands exactly where planned, and no grave is looted on the way.
+#[test]
+fn filling_bot_ends_its_log_on_each_grave_spot() {
+    let mut retries = 0;
+    for seed in [3u64, 77, 1234, 0xDEAD] {
+        let mut graves: std::vec::Vec<Grave> = vec![];
+        for depth in (1..=10u32).rev() {
+            for spot in safe_grave_spots(seed, depth, rules::GRAVES_PER_DEPTH as usize) {
+                let entry = DiveEntry { start_depth: 1, inventory: vec![(ITEM_GOLD, 1)], graves: graves.clone() };
+                let (delay, moves) = (0..40)
+                    .find_map(|delay| moves_to_quit_at(seed, &entry, depth, spot, MAX_MOVES as usize, delay).map(|m| (delay, m)))
+                    .unwrap_or_else(|| panic!("seed {seed}: no log reaches {spot:?} at depth {depth}"));
+                retries += delay;
+                let out = run_dive(seed, &entry, &moves);
+                assert!(out.died && !out.returned, "seed {seed} depth {depth} {spot:?}: {out:?}");
+                assert_eq!((out.final_depth, out.death_pos), (depth, Some(spot)), "seed {seed}");
+                assert!(out.looted_graves.is_empty(), "seed {seed} depth {depth}: looted {:?}", out.looted_graves);
+                graves.push(Grave { id: graves.len() as u32, depth, x: spot.0, y: spot.1, items: out.dropped_into_grave });
+            }
+        }
+        assert_eq!(graves.len(), 10 * rules::GRAVES_PER_DEPTH as usize);
+    }
+    std::println!("opening waits needed in total: {retries}");
 }

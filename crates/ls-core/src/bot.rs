@@ -194,6 +194,109 @@ fn choose(d: &DiveSim, style: Style) -> u8 {
     MOVE_WAIT
 }
 
+/// Up to `n` floor tiles of `depth` on the map of `seed` where graves never cut the map apart:
+/// with all of them taken, every other tile reachable from the start still is (the stairs too),
+/// and no two of them touch, so each stays reachable while the others are taken. The gas
+/// benchmark puts its graves there. The scan starts at a seeded tile and wraps around.
+pub fn safe_grave_spots(seed: u64, depth: u32, n: usize) -> Vec<(u8, u8)> {
+    let level = generate_level(seed, depth, &[]);
+    let reach = |blocked: &[(i32, i32)]| -> usize {
+        let mut seen = [false; CELLS];
+        let mut queue: Vec<(i32, i32)> = Vec::with_capacity(CELLS);
+        seen[(level.start.1 * W + level.start.0) as usize] = true;
+        queue.push(level.start);
+        let mut head = 0;
+        while head < queue.len() {
+            let (x, y) = queue[head];
+            head += 1;
+            if level.tile(x, y) == STAIRS {
+                continue;
+            }
+            for (_, dx, dy) in DIRS {
+                let (nx, ny) = (x + dx, y + dy);
+                if level.passable(nx, ny) && !blocked.contains(&(nx, ny)) && !seen[(ny * W + nx) as usize] {
+                    seen[(ny * W + nx) as usize] = true;
+                    queue.push((nx, ny));
+                }
+            }
+        }
+        queue.len()
+    };
+    let all = reach(&[]);
+    let first = (seed ^ u64::from(depth).wrapping_mul(0x9E37_79B9)) as usize % CELLS;
+    let mut spots: Vec<(i32, i32)> = Vec::new();
+    for k in 0..CELLS {
+        if spots.len() == n {
+            break;
+        }
+        let i = (first + k) % CELLS;
+        let (x, y) = (i as i32 % W, i as i32 / W);
+        if level.tile(x, y) != FLOOR || (x, y) == level.start {
+            continue;
+        }
+        if spots.iter().any(|&(sx, sy)| (sx - x).abs() <= 1 && (sy - y).abs() <= 1) {
+            continue;
+        }
+        spots.push((x, y));
+        // Taking a reachable tile that cuts nothing loses exactly that tile; an unreachable one
+        // (inside the closed vault) loses none and is refused too.
+        if reach(&spots) != all - spots.len() {
+            spots.pop();
+        }
+    }
+    spots.into_iter().map(|(x, y)| (x as u8, y as u8)).collect()
+}
+
+/// A log that walks down to `depth` and onto `spot` there and ends on it: the rules count that as
+/// a quit, a death on the spot, so the dive's grave lands exactly there. On the way it plays like
+/// `DieAt(depth)` (fights, rests, walks around graves, over one only when it is the only way).
+/// `delay` waits come first, so a retry meets different rolls. `None` if the dive dies elsewhere or
+/// `n` moves do not get there. Used by the gas benchmark to place its graves.
+pub fn moves_to_quit_at(seed: u64, entry: &DiveEntry, depth: u32, spot: (u8, u8), n: usize, delay: usize) -> Option<Vec<u8>> {
+    let target = (i32::from(spot.0), i32::from(spot.1));
+    let mut dive = DiveSim::new(seed, entry);
+    let mut log = Vec::new();
+    while log.len() < n {
+        if dive.depth == depth && (dive.x, dive.y) == target {
+            return Some(log);
+        }
+        if dive.is_over() {
+            return None;
+        }
+        let mv = if log.len() < delay {
+            MOVE_WAIT
+        } else if dive.depth < depth {
+            choose(&dive, Style::DieAt(depth))
+        } else {
+            step_to(&dive, target)
+        };
+        log.push(mv);
+        dive.step(mv);
+    }
+    None
+}
+
+/// One move toward `target` on the current depth: drink when low in a fight, fight what is
+/// adjacent, rest when hurt, then walk (around graves if possible).
+fn step_to(d: &DiveSim, target: (i32, i32)) -> u8 {
+    let monster_here = |x: i32, y: i32| d.level.monster_at(x, y).is_some();
+    let adjacent = DIRS.iter().any(|&(_, dx, dy)| monster_here(d.x + dx, d.y + dy));
+    let (max, potions) = (d.max_hp(), count_item(&d.carried, ITEM_POTION));
+    if adjacent && potions > 0 && d.hp * 10 < max * 4 {
+        return MOVE_POTION;
+    }
+    for (mv, dx, dy) in DIRS {
+        if monster_here(d.x + dx, d.y + dy) {
+            return mv;
+        }
+    }
+    if d.hp * 10 < max * 6 {
+        return if potions > 0 && d.hp * 10 < max * 4 { MOVE_POTION } else { MOVE_WAIT };
+    }
+    let at = |x: i32, y: i32| (x, y) == target;
+    first_step(d, true, at).or_else(|| first_step(d, false, at)).unwrap_or(MOVE_WAIT)
+}
+
 /// The bot stops taking stairs here; deeper, its simple tactics die within a few hundred moves.
 pub const BOT_MAX_DEPTH: u32 = 15;
 

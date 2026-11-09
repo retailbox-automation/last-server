@@ -1,0 +1,605 @@
+{
+  "core": {
+    "core_sha256": "91276618f8dca4dbfbc4ae4d0b279a0a1a5bcde8320b837d345624877a5b1f5a",
+    "ls_core": "0.2.0",
+    "rules_sha256": "15e75b62a854bc2b87c310d975e3a3b1fd655afe25620e9908d83fe050bab457"
+  },
+  "fill": {
+    "first_fill_dives": 99,
+    "graves_summary_after_first_fill": [
+      [
+        1,
+        10
+      ],
+      [
+        2,
+        10
+      ],
+      [
+        3,
+        10
+      ],
+      [
+        4,
+        10
+      ],
+      [
+        5,
+        10
+      ],
+      [
+        6,
+        10
+      ],
+      [
+        7,
+        10
+      ],
+      [
+        8,
+        10
+      ],
+      [
+        9,
+        10
+      ],
+      [
+        10,
+        10
+      ]
+    ],
+    "method": "real dives that end on safe spots (ls_core::bot::safe_grave_spots / moves_to_quit_at), deepest depth first",
+    "refill_dives": 102
+  },
+  "generated_by": "spike/tests/sandbox.rs bench_v1_gas",
+  "graves_per_depth": 10,
+  "graves_summary_before_each_graves_row": [
+    {
+      "graves_summary": [
+        [
+          1,
+          10
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          3,
+          10
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          5,
+          10
+        ],
+        [
+          6,
+          10
+        ],
+        [
+          7,
+          10
+        ],
+        [
+          8,
+          10
+        ],
+        [
+          9,
+          10
+        ],
+        [
+          10,
+          10
+        ]
+      ],
+      "row": 0
+    },
+    {
+      "graves_summary": [
+        [
+          1,
+          10
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          3,
+          10
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          5,
+          10
+        ],
+        [
+          6,
+          10
+        ],
+        [
+          7,
+          10
+        ],
+        [
+          8,
+          10
+        ],
+        [
+          9,
+          10
+        ],
+        [
+          10,
+          10
+        ]
+      ],
+      "row": 1
+    },
+    {
+      "graves_summary": [
+        [
+          1,
+          10
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          3,
+          10
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          5,
+          10
+        ],
+        [
+          6,
+          10
+        ],
+        [
+          7,
+          10
+        ],
+        [
+          8,
+          10
+        ],
+        [
+          9,
+          10
+        ],
+        [
+          10,
+          10
+        ]
+      ],
+      "row": 2
+    },
+    {
+      "graves_summary": [
+        [
+          1,
+          10
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          3,
+          10
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          5,
+          10
+        ],
+        [
+          6,
+          10
+        ],
+        [
+          7,
+          10
+        ],
+        [
+          8,
+          10
+        ],
+        [
+          9,
+          10
+        ],
+        [
+          10,
+          10
+        ]
+      ],
+      "row": 3
+    },
+    {
+      "graves_summary": [
+        [
+          1,
+          10
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          3,
+          10
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          5,
+          10
+        ],
+        [
+          6,
+          10
+        ],
+        [
+          7,
+          10
+        ],
+        [
+          8,
+          10
+        ],
+        [
+          9,
+          10
+        ],
+        [
+          10,
+          10
+        ]
+      ],
+      "row": 4
+    },
+    {
+      "graves_summary": [
+        [
+          1,
+          10
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          3,
+          10
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          5,
+          10
+        ],
+        [
+          6,
+          10
+        ],
+        [
+          7,
+          10
+        ],
+        [
+          8,
+          10
+        ],
+        [
+          9,
+          10
+        ],
+        [
+          10,
+          10
+        ]
+      ],
+      "row": 5
+    },
+    {
+      "graves_summary": [
+        [
+          1,
+          10
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          3,
+          10
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          5,
+          10
+        ],
+        [
+          6,
+          10
+        ],
+        [
+          7,
+          10
+        ],
+        [
+          8,
+          10
+        ],
+        [
+          9,
+          10
+        ],
+        [
+          10,
+          10
+        ]
+      ],
+      "row": 6
+    }
+  ],
+  "prepaid_tgas": 300,
+  "rows": [
+    {
+      "contract_equals_native": true,
+      "depths_1_10_full": false,
+      "died": false,
+      "final_depth": 3,
+      "graves_in_state": 0,
+      "graves_looted": 0,
+      "graves_on_visited_depths": 0,
+      "moves_applied": 266,
+      "n": 300,
+      "returned": true,
+      "seed": "6342289388706101747",
+      "style": "survivor",
+      "tgas": 5.77060189529,
+      "total_gas_burnt": 5770601895290
+    },
+    {
+      "contract_equals_native": true,
+      "depths_1_10_full": false,
+      "died": false,
+      "final_depth": 9,
+      "graves_in_state": 0,
+      "graves_looted": 0,
+      "graves_on_visited_depths": 0,
+      "moves_applied": 962,
+      "n": 1000,
+      "returned": true,
+      "seed": "6342289388706101747",
+      "style": "survivor",
+      "tgas": 9.796334142201,
+      "total_gas_burnt": 9796334142201
+    },
+    {
+      "contract_equals_native": true,
+      "depths_1_10_full": false,
+      "died": false,
+      "final_depth": 15,
+      "graves_in_state": 0,
+      "graves_looted": 0,
+      "graves_on_visited_depths": 0,
+      "moves_applied": 2992,
+      "n": 3000,
+      "returned": true,
+      "seed": "6342289388706101747",
+      "style": "survivor",
+      "tgas": 17.199632097719,
+      "total_gas_burnt": 17199632097719
+    },
+    {
+      "contract_equals_native": true,
+      "depths_1_10_full": false,
+      "died": false,
+      "final_depth": 6,
+      "graves_in_state": 0,
+      "graves_looted": 0,
+      "graves_on_visited_depths": 0,
+      "moves_applied": 261,
+      "n": 300,
+      "returned": true,
+      "seed": "6342289388706101747",
+      "style": "rusher",
+      "tgas": 5.982366014573,
+      "total_gas_burnt": 5982366014573
+    },
+    {
+      "contract_equals_native": true,
+      "depths_1_10_full": false,
+      "died": true,
+      "final_depth": 7,
+      "graves_in_state": 0,
+      "graves_looted": 0,
+      "graves_on_visited_depths": 0,
+      "moves_applied": 280,
+      "n": 1000,
+      "returned": false,
+      "seed": "6342289388706101747",
+      "style": "rusher",
+      "tgas": 6.99311481524,
+      "total_gas_burnt": 6993114815240
+    },
+    {
+      "contract_equals_native": true,
+      "depths_1_10_full": false,
+      "died": true,
+      "final_depth": 7,
+      "graves_in_state": 1,
+      "graves_looted": 1,
+      "graves_on_visited_depths": 1,
+      "moves_applied": 280,
+      "n": 3000,
+      "returned": false,
+      "seed": "6342289388706101747",
+      "style": "rusher",
+      "tgas": 8.074560763423,
+      "total_gas_burnt": 8074560763423
+    },
+    {
+      "contract_equals_native": true,
+      "depths_1_10_full": true,
+      "died": false,
+      "final_depth": 3,
+      "graves_in_state": 100,
+      "graves_looted": 0,
+      "graves_on_visited_depths": 30,
+      "moves_applied": 268,
+      "n": 300,
+      "returned": true,
+      "seed": "6342289388706101747",
+      "style": "avoider",
+      "tgas": 6.418544005956,
+      "total_gas_burnt": 6418544005956
+    },
+    {
+      "contract_equals_native": true,
+      "depths_1_10_full": true,
+      "died": false,
+      "final_depth": 6,
+      "graves_in_state": 100,
+      "graves_looted": 1,
+      "graves_on_visited_depths": 60,
+      "moves_applied": 265,
+      "n": 300,
+      "returned": true,
+      "seed": "6342289388706101747",
+      "style": "rusher",
+      "tgas": 7.787721382016,
+      "total_gas_burnt": 7787721382016
+    },
+    {
+      "contract_equals_native": true,
+      "depths_1_10_full": true,
+      "died": false,
+      "final_depth": 3,
+      "graves_in_state": 100,
+      "graves_looted": 29,
+      "graves_on_visited_depths": 30,
+      "moves_applied": 264,
+      "n": 300,
+      "returned": true,
+      "seed": "6342289388706101747",
+      "style": "survivor",
+      "tgas": 9.409861338765,
+      "total_gas_burnt": 9409861338765
+    },
+    {
+      "contract_equals_native": true,
+      "depths_1_10_full": true,
+      "died": false,
+      "final_depth": 2,
+      "graves_in_state": 100,
+      "graves_looted": 15,
+      "graves_on_visited_depths": 20,
+      "moves_applied": 263,
+      "n": 300,
+      "returned": true,
+      "seed": "6342289388706101747",
+      "style": "looter",
+      "tgas": 7.276536941891,
+      "total_gas_burnt": 7276536941891
+    },
+    {
+      "contract_equals_native": true,
+      "depths_1_10_full": true,
+      "died": false,
+      "final_depth": 21,
+      "graves_in_state": 100,
+      "graves_looted": 7,
+      "graves_on_visited_depths": 100,
+      "moves_applied": 961,
+      "n": 1000,
+      "returned": true,
+      "seed": "6342289388706101747",
+      "style": "rusher",
+      "tgas": 16.732021333813,
+      "total_gas_burnt": 16732021333813
+    },
+    {
+      "contract_equals_native": true,
+      "depths_1_10_full": true,
+      "died": false,
+      "final_depth": 9,
+      "graves_in_state": 100,
+      "graves_looted": 50,
+      "graves_on_visited_depths": 90,
+      "moves_applied": 961,
+      "n": 1000,
+      "returned": true,
+      "seed": "6342289388706101747",
+      "style": "survivor",
+      "tgas": 15.718863471247,
+      "total_gas_burnt": 15718863471247
+    },
+    {
+      "contract_equals_native": true,
+      "depths_1_10_full": true,
+      "died": false,
+      "final_depth": 15,
+      "graves_in_state": 100,
+      "graves_looted": 50,
+      "graves_on_visited_depths": 100,
+      "moves_applied": 2977,
+      "n": 3000,
+      "returned": true,
+      "seed": "6342289388706101747",
+      "style": "survivor",
+      "tgas": 23.472102560129,
+      "total_gas_burnt": 23472102560129
+    }
+  ],
+  "sandbox": {
+    "node_build": "2.14.0",
+    "node_version": "2.14.0",
+    "protocol_version": 88
+  },
+  "threshold": {
+    "graves": 100,
+    "limit_tgas": 10,
+    "min_graves_on_visited_depths": 20,
+    "n": 300,
+    "on_depths": "1..=10",
+    "pass": true,
+    "qualifying_rows": 4,
+    "verdict": "PASS",
+    "worst_tgas": 9.409861338765
+  },
+  "unix_time": 1794257025,
+  "wasm": {
+    "file": "<CARGO_TARGET_DIR>/wasm32-unknown-unknown/release/ls_contract.wasm",
+    "size_bytes": 308639
+  }
+}
