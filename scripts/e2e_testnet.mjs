@@ -229,8 +229,14 @@ try {
         check(bOut && bOut.looted_graves.includes(grave.id) && bOut.returned && !bOut.died, `B looted grave ${grave.id} and climbed out`, JSON.stringify(bOut?.looted_graves));
         check(bOut && bOut.looted_graves.length <= 50, 'B looted at most GRAVES_LOOTED_PER_DIVE (50) graves', String(bOut?.looted_graves.length));
         check(bOut && digest(bOut) === digest(route.outcome), 'B: contract outcome equals the web wasm replay of the same log');
-        const left = await view('graves', { depth: grave.depth });
-        check(!left.some((g) => g.id === grave.id), 'the grave is gone from the graves view');
+        // The RPC behind a load balancer can lag a block or two after the settle: poll before failing.
+        let left = await view('graves', { depth: grave.depth });
+        const t0 = Date.now();
+        while (left.some((g) => g.id === grave.id) && Date.now() - t0 < 15000) {
+          await new Promise((r) => setTimeout(r, 1000));
+          left = await view('graves', { depth: grave.depth });
+        }
+        check(!left.some((g) => g.id === grave.id), 'the grave is gone from the graves view', `${Date.now() - t0} ms`);
         const stash = new Map((await view('player', { account_id: b.accountId })).stash.map(([t, n]) => [t, BigInt(n)]));
         check(grave.items.every(([t, n]) => (stash.get(t) ?? 0n) >= BigInt(n)), "B's stash holds what the grave held", [...stash].map(([t, n]) => `${t}:${n}`).join(' '));
       }
