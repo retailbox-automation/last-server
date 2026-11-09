@@ -531,6 +531,8 @@ async fn an_open_dive_expires_into_a_grave_the_next_day() -> R<()> {
     let first = dive(&env, &alice, &[], Style::Survivor, 600).await?;
     assert!(!first.outcome.died);
     let gold = balances(&env, alice.id()).await?[idx("gold")];
+    assert!(gold >= 10, "alice found {gold} gold");
+    let toll = gold / u128::from(ls_core::rules::DEATH_TOLL_GOLD_DIV);
     let ticket = start(&env, &alice, &[("gold", gold)]).await?;
 
     // Same day: nobody can expire it.
@@ -584,7 +586,10 @@ async fn an_open_dive_expires_into_a_grave_the_next_day() -> R<()> {
     let graves: Vec<Value> = view(&env, "graves", json!({ "depth": ticket.start_depth })).await?;
     let grave = graves.iter().find(|g| g["id"] == grave_id).expect("alice's grave at the start depth");
     assert_eq!(grave["owner_id"], alice.id().as_str());
-    assert_eq!(grave["items"], json!([["gold", gold.to_string()]]), "the whole loadout, no toll");
+    assert_eq!(grave["items"], json!([["gold", (gold - toll).to_string()]]), "the loadout minus the death toll, as for a quit");
+    let burn = ev.iter().find(|e| e["event"] == "mt_burn").expect("the death toll is burned");
+    assert_eq!(burn["data"][0]["owner_id"], alice.id().as_str());
+    assert_eq!(burn["data"][0]["amounts"], json!([toll.to_string()]));
     let (x, y) = ls_core::expired_grave_spot(ticket.seed(), ticket.dive_id.parse()?);
     assert_eq!((grave["x"].as_u64().unwrap() as u8, grave["y"].as_u64().unwrap() as u8), (x, y));
     assert_eq!(balances(&env, alice.id()).await?[idx("gold")], 0);
