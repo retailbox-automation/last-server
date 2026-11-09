@@ -16,8 +16,8 @@ export interface Flash {
 export interface SurfaceActions {
   onDive: (loadout: Array<[string, number]>) => void;
   onContinue: (ticket: DiveTicket, saved: { saved: SavedDive; moves: Uint8Array } | null) => void;
-  /** Settle the open dive right away with the moves this browser has (none: an empty log). */
-  onEnd: (ticket: DiveTicket, saved: { saved: SavedDive; moves: Uint8Array } | null) => void;
+  /** Give up the open dive: settle it with the moves this browser has (none: an empty log). Counts as a death. */
+  onGiveUp: (ticket: DiveTicket, saved: { saved: SavedDive; moves: Uint8Array } | null) => void;
   onSwitchPlayer: () => void;
 }
 
@@ -95,12 +95,21 @@ export function surfaceScreen(session: Session, actions: SurfaceActions, flash?:
         h('p', {}, saved
           ? `You are ${saved.moves.length} moves in. Everything you took down stays locked until the dive is recorded.`
           : 'This browser has no record of those moves, so the dive restarts from its first step. Your locked items stay locked until a dive is recorded.'),
-        h('p', { class: 'muted small' }, saved
-          ? 'Or end it here: the contract records the moves so far, a death included.'
-          : 'Or end it here: with no moves recorded you come back with what you took down and nothing more.'),
+        h('p', { class: 'muted small' }, 'Only climbing out on the way up keeps what you carry. Giving up counts as a death: your grave stays where you stand.'),
         h('div', { class: 'row' },
           h('button', { class: 'primary', type: 'button', onclick: () => actions.onContinue(active, saved) }, saved ? 'Continue the dive' : 'Restart the dive'),
-          h('button', { type: 'button', onclick: () => actions.onEnd(active, saved) }, 'End the dive here'))));
+          h('button', {
+            type: 'button',
+            class: 'danger',
+            onclick: () => {
+              const ok = window.confirm(
+                'Give up this dive?\n\nIt counts as a death: everything you carry (your loadout and what you found) becomes your grave '
+                + (saved ? 'where you stand now' : 'at the entrance of the dive')
+                + ', anyone can take it, and the death toll burns a tenth of your gold.\n\nTo keep your items, choose Continue and climb out on the way up instead.',
+              );
+              if (ok) actions.onGiveUp(active, saved);
+            },
+          }, 'Give up the dive (counts as death)'))));
     } else {
       const free = available(me);
       const picks = new Map<string, number>();

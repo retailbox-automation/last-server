@@ -34,6 +34,39 @@ describe('ls-wasm', { skip: built ? false : 'run `npm run wasm` first' }, async 
     sim.free();
   });
 
+  it('endings: the way up banks, a log that stops inside or an empty log is a quit (a death)', () => {
+    const sim = new w.Sim(3n, entry);
+    const v = JSON.parse(sim.view());
+    assert.deepEqual([v.x, v.y], [v.exit_x, v.exit_y]); // a dive starts on the way up
+    sim.free();
+    const up = JSON.parse(w.run_dive(3n, entry, Uint8Array.of(6)));
+    assert.equal(up.returned, true);
+    assert.equal(up.died, false);
+    assert.equal(up.quit, false);
+    assert.deepEqual(up.dropped_into_grave, []);
+    const empty = JSON.parse(w.run_dive(3n, entry, new Uint8Array()));
+    assert.equal(empty.quit, true);
+    assert.equal(empty.died, true);
+    assert.ok(empty.dropped_into_grave.length > 0 && empty.death_pos !== null);
+  });
+
+  it('the surface move off the way up is only a wait', () => {
+    const sim = new w.Sim(3n, entry);
+    let v = JSON.parse(sim.view());
+    for (const mv of [0, 1, 2, 3]) {
+      sim.step(mv);
+      v = JSON.parse(sim.view());
+      if (v.x !== v.exit_x || v.y !== v.exit_y) break;
+    }
+    if (v.x !== v.exit_x || v.y !== v.exit_y) {
+      sim.step(6);
+      const after = JSON.parse(sim.view());
+      assert.equal(after.returned, false);
+      assert.equal(after.over, false);
+    }
+    sim.free();
+  });
+
   it('rejects a malformed entry', () => {
     assert.throws(() => new w.Sim(1n, '{"start_depth":'));
   });

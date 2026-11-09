@@ -18,6 +18,7 @@ const C = {
   monster: '#e5484d',
   grave: '#a7b0c2',
   graveLooted: '#5a6378',
+  exit: '#7dd3fc',
 };
 
 export function setupCanvas(canvas: HTMLCanvasElement, tiles: number): CanvasRenderingContext2D {
@@ -121,6 +122,22 @@ export function drawView(ctx: CanvasRenderingContext2D, v: DiveView, flash: bool
         }
       }
     }
+  }
+  // The way up: an outlined square with an arrow; MOVE.surface works only on this tile.
+  {
+    const px = v.exit_x * TILE_PX;
+    const py = v.exit_y * TILE_PX;
+    ctx.strokeStyle = C.exit;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(px + 1, py + 1, TILE_PX - 2, TILE_PX - 2);
+    ctx.fillStyle = C.exit;
+    ctx.beginPath();
+    ctx.moveTo(px + TILE_PX / 2, py + 3);
+    ctx.lineTo(px + TILE_PX - 4, py + TILE_PX / 2);
+    ctx.lineTo(px + 4, py + TILE_PX / 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillRect(px + TILE_PX / 2 - 1.5, py + TILE_PX / 2, 3, TILE_PX / 2 - 3);
   }
   for (const g of v.graves) drawGrave(ctx, g.x * TILE_PX, g.y * TILE_PX, g.looted);
   for (const it of v.items) drawItem(ctx, tokenOf(it.item), it.x * TILE_PX, it.y * TILE_PX);

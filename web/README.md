@@ -41,7 +41,9 @@ It cannot catch a contract bug; it exercises the UI, sign-up, the signed-delegat
 2. If the relayer is unreachable, times out, answers 5xx or 429, the relayer may still have sent the call (`504 relay_unknown` says so outright). The page first reads `active_dive`: if the call already took effect (`start_dive`: a dive is open; `settle_dive`: this dive is closed) it carries on; only otherwise does it send the same call directly from the player's account with 100 Tgas (new accounts get 0.2 testnet NEAR at sign-up).
 3. If the relayer refuses the call (policy 4xx) the page shows the reason and does not retry. If the contract refuses it, the page reads `active_dive` the same way first: a refusal caused by an earlier attempt that went through (`no active dive` after a lost reply) counts as done.
 
-A dive in progress is saved in `localStorage` (move log plus the state it started from), so closing the tab does not turn it into a death; `Continue the dive` replays it. `End the dive here` on the surface records the open dive right away with the moves this browser has; with none (another browser, cleared storage) it settles an empty log and the player comes back with the loadout.
+Only the way up keeps what you carry: on each depth it is the tile where the dive arrived (drawn as a blue arrow). Standing on it, `U` or the `Climb to the surface` button sends `MOVE_SURFACE` (byte 6) and the dive is recorded as `returned`. A log that ends anywhere else (out of moves, or given up) is a `quit`, which the rules count as a death: grave where the player stands, death toll. The result screen tells the three endings apart (returned / killed / gave up).
+
+A dive in progress is saved in `localStorage` (move log plus the state it started from), so closing the tab does not lose it; `Continue the dive` replays it. `Give up the dive (counts as death)` on the surface asks for confirmation, then records the open dive with the moves this browser has (none: an empty log, so the grave is at the dive's entrance).
 
 ## Notes
 

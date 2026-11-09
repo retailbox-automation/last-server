@@ -44,7 +44,7 @@ function showSurface(session: Session, flash?: Flash): void {
       {
         onDive: (loadout) => void beginDive(session, loadout),
         onContinue: (ticket, saved) => void resumeDive(session, ticket, saved),
-        onEnd: (ticket, saved) => void endDive(session, ticket, saved),
+        onGiveUp: (ticket, saved) => void giveUpDive(session, ticket, saved),
         onSwitchPlayer: () => { forgetLast(); showLogin(); },
       },
       flash,
@@ -99,8 +99,11 @@ async function resumeDive(session: Session, ticket: DiveTicket, saved: { saved: 
   }
 }
 
-/** Records an open dive without playing on: the saved moves, or an empty log if this browser has none. */
-async function endDive(session: Session, ticket: DiveTicket, saved: { saved: SavedDive; moves: Uint8Array } | null): Promise<void> {
+/**
+ * Records an open dive without playing on: the saved moves, or an empty log if this browser has none.
+ * A log that does not end with the way up is a quit, which the rules count as a death.
+ */
+async function giveUpDive(session: Session, ticket: DiveTicket, saved: { saved: SavedDive; moves: Uint8Array } | null): Promise<void> {
   busy('Reading your dive...');
   let graves: GraveView[];
   let base: DiveBase;

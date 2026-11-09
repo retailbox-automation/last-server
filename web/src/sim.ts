@@ -16,6 +16,9 @@ export interface DiveView {
   height: number;
   /** Row-major: tiles[y * width + x]. */
   tiles: number[];
+  /** The way up on this depth (where the dive arrived): MOVE.surface works only here. */
+  exit_x: number;
+  exit_y: number;
   x: number;
   y: number;
   hp: number;
@@ -29,6 +32,7 @@ export interface DiveView {
   moves_applied: number;
   over: boolean;
   died: boolean;
+  returned: boolean;
 }
 
 export type GameEvent =
@@ -47,13 +51,18 @@ export type GameEvent =
   | { kind: 'descended'; depth: number }
   | { kind: 'regenerated' }
   | { kind: 'spawned'; monster: number; x: number; y: number }
-  | { kind: 'died'; x: number; y: number };
+  | { kind: 'died'; x: number; y: number }
+  | { kind: 'surfaced' };
 
 export interface StepEvents { applied: boolean; events: GameEvent[] }
 
 export interface DiveOutcome {
   final_depth: number;
+  /** Killed, or `quit`: the log ended inside the dungeon, which counts as a death where the player stood. */
   died: boolean;
+  /** The log ends with a return to the surface: everything carried is banked. */
+  returned: boolean;
+  quit: boolean;
   moves_applied: number;
   picked: ItemAmount[];
   looted_graves: number[];
@@ -71,7 +80,8 @@ export interface DiveOutcome {
 export interface Grave { id: number; depth: number; x: number; y: number; items: ItemAmount[] }
 export interface DiveEntry { start_depth: number; inventory: ItemAmount[]; graves: Grave[] }
 
-export const MOVE = { up: 0, down: 1, left: 2, right: 3, wait: 4, potion: 5 } as const;
+/** `surface` leaves the dungeon; only on the way-up tile (DiveView exit_x/exit_y), elsewhere it is a wait. */
+export const MOVE = { up: 0, down: 1, left: 2, right: 3, wait: 4, potion: 5, surface: 6 } as const;
 export const TILE = { wall: 0, floor: 1, stairs: 2, door: 3 } as const;
 
 let ready: Promise<void> | null = null;

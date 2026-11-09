@@ -13,7 +13,8 @@ export interface DiveFinish {
   /** What the local run says would happen if the log ends here. */
   local: DiveOutcome;
   history: GameEvent[];
-  reason: 'returned' | 'died' | 'limit';
+  /** returned: took the way up (banked); died: killed; quit: the log ends inside (out of moves, or given up) = a death. */
+  reason: 'returned' | 'died' | 'quit';
 }
 
 export interface DiveScreenOptions {
@@ -42,10 +43,14 @@ export function replayFinish(base: DiveBase, moves: Uint8Array): DiveFinish {
       history.push(...step.events);
     }
     const local = sim.outcome();
-    return { moves: Uint8Array.from(applied), local, history, reason: local.died ? 'died' : 'returned' };
+    return { moves: Uint8Array.from(applied), local, history, reason: reasonOf(local) };
   } finally {
     sim.free();
   }
+}
+
+function reasonOf(o: DiveOutcome): DiveFinish['reason'] {
+  return o.returned ? 'returned' : o.quit ? 'quit' : 'died';
 }
 
 const KEYS: Record<string, number> = {
@@ -55,6 +60,7 @@ const KEYS: Record<string, number> = {
   ArrowRight: MOVE.right, d: MOVE.right, D: MOVE.right,
   ' ': MOVE.wait, '.': MOVE.wait,
   p: MOVE.potion, P: MOVE.potion, e: MOVE.potion, E: MOVE.potion,
+  u: MOVE.surface, U: MOVE.surface,
 };
 
 function describe(ev: GameEvent, graveById: Map<number, GraveView>): string | null {
@@ -73,6 +79,7 @@ function describe(ev: GameEvent, graveById: Map<number, GraveView>): string | nu
     case 'door_locked': return 'The door is locked. It needs a blue key.';
     case 'descended': return `You go down to depth ${ev.depth}.`;
     case 'died': return 'You fall. What you carried stays here.';
+    case 'surfaced': return 'You climb the way up and leave the dungeon.';
     default: return null;
   }
 }
@@ -98,7 +105,7 @@ export function diveScreen(opts: DiveScreenOptions): HTMLElement {
   const inventory = h('div', { class: 'chips', 'aria-label': 'You carry' });
   const log = h('div', { class: 'log', 'aria-live': 'polite' });
   const overlay = h('div', { class: 'banner bad', hidden: true });
-  const returnBtn = h('button', { class: 'primary', type: 'button' }, 'Return to the surface');
+  const returnBtn = h('button', { class: 'primary', type: 'button', disabled: true, title: 'Stand on the way up (the blue arrow) to climb out' }, 'Climb to the surface (U)');
   const stage = h('div', { class: 'stage' }, canvas);
 
   const lines: string[] = [];
@@ -114,6 +121,10 @@ export function diveScreen(opts: DiveScreenOptions): HTMLElement {
     depthChip.textContent = `Depth ${v.depth}`;
     movesChip.textContent = `Move ${v.moves_applied} / ${info.maxMoves}`;
     killsChip.textContent = `Kills ${v.kills}`;
+    // Only the tile where this depth was entered leads up; anywhere else the move would be a wait.
+    const onExit = v.x === v.exit_x && v.y === v.exit_y;
+    returnBtn.disabled = v.over || !onExit;
+    returnBtn.title = onExit ? 'Leave the dungeon with everything you carry' : 'Stand on the way up (the blue arrow) to climb out';
     const chips = v.inventory.map(([id, n]) => h('span', { class: 'chip' }, `${itemLabel(tokenOf(id))} x${n}`));
     if (v.blade_durability > 0) chips.push(h('span', { class: 'chip' }, `Blade: ${v.blade_durability} hits left`));
     inventory.replaceChildren(...chips);
@@ -138,6 +149,12 @@ export function diveScreen(opts: DiveScreenOptions): HTMLElement {
     if (finished) return;
     const v0 = sim.view();
     if (v0.over) return;
+    // Off the way up, the surface key would only spend a move as a wait.
+    if (mv === MOVE.surface && (v0.x !== v0.exit_x || v0.y !== v0.exit_y)) {
+      lines.push('The way up is the tile with the blue arrow, where you came down.');
+      paint(v0);
+      return;
+    }
     const { applied, events } = sim.step(mv);
     if (!applied) return;
     moves.push(mv);
@@ -154,10 +171,13 @@ export function diveScreen(opts: DiveScreenOptions): HTMLElement {
     if (v.over) {
       returnBtn.hidden = true;
       overlay.hidden = false;
-      overlay.textContent = v.died
-        ? 'You died. Everything you carried stays at the spot where you fell, as your grave. Recording the dive...'
-        : 'You are out of moves for this dive. Recording the dive...';
-      setTimeout(() => finish(v.died ? 'died' : 'limit'), 1200);
+      overlay.className = v.returned ? 'banner good' : 'banner bad';
+      overlay.textContent = v.returned
+        ? 'You are back on the surface with everything you carry. Recording the dive...'
+        : v.died
+          ? 'You died. Everything you carried stays at the spot where you fell, as your grave. Recording the dive...'
+          : 'You are out of moves inside the dungeon: that counts as dying where you stand. Recording the dive...';
+      setTimeout(() => finish(v.returned ? 'returned' : v.died ? 'died' : 'quit'), 1200);
     }
   }
 
@@ -169,7 +189,7 @@ export function diveScreen(opts: DiveScreenOptions): HTMLElement {
     play(mv);
   }
 
-  returnBtn.addEventListener('click', () => finish('returned'));
+  returnBtn.addEventListener('click', () => play(MOVE.surface));
   document.addEventListener('keydown', onKey);
 
   // Replay a resumed dive silently, then show the current state.
@@ -182,7 +202,7 @@ export function diveScreen(opts: DiveScreenOptions): HTMLElement {
   if (opts.resume.length > 0) lines.push(`Dive resumed at move ${moves.length}.`);
   const v = sim.view();
   paint(v);
-  if (v.over) setTimeout(() => finish(v.died ? 'died' : 'limit'), 0);
+  if (v.over) setTimeout(() => finish(v.returned ? 'returned' : v.died ? 'died' : 'quit'), 0);
 
   const pad = h('div', { class: 'pad', 'aria-label': 'Touch controls' },
     h('span'), padButton('Up', '↑', MOVE.up), h('span'),
@@ -201,6 +221,6 @@ export function diveScreen(opts: DiveScreenOptions): HTMLElement {
     h('div', { class: 'hud' }, h('strong', {}, 'You carry:'), inventory),
     log,
     pad,
-    h('p', { class: 'muted small' }, 'Arrow keys or WASD to move, space to wait, P to drink a potion. Walk into a monster to attack. Go down the green stairs for better loot and older graves.'),
+    h('p', { class: 'muted small' }, 'Arrow keys or WASD to move, space to wait, P to drink a potion, U to climb out on the way up (the blue arrow, where you came down). Walk into a monster to attack. Go down the green stairs for better loot and older graves. Only climbing out keeps what you carry: a dive that ends anywhere else counts as a death.'),
   );
 }
