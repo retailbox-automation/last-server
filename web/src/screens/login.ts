@@ -2,7 +2,7 @@ import { accountExists } from '../chain.ts';
 import { config, nameProblem } from '../config.ts';
 import { h } from '../dom.ts';
 import { KeyPair } from 'near-api-js';
-import { newKeyPair, saveSession, storedSecret } from '../keys.ts';
+import { newKeyPair, rememberKey, saveSession, storedSecret } from '../keys.ts';
 import type { Session } from '../keys.ts';
 import { RelayerRefused, RelayerUnavailable, signup } from '../relayer.ts';
 
@@ -26,11 +26,14 @@ async function signIn(name: string): Promise<Session> {
     }
     if (e instanceof RelayerRefused) throw new Error(e.message);
     if (e instanceof RelayerUnavailable) {
+      // The relayer may have created the account before failing: keep the key, so trying again
+      // with the same name signs in with it instead of losing the name.
+      rememberKey(name, key.toString());
       // Be precise about why: the name may still be free; nobody can create it right now.
       const taken = await accountExists(accountId).catch(() => false);
       throw new Error(
         taken
-          ? 'That name is taken.'
+          ? 'That name already exists. If you just tried to create it in this browser, press Play again to sign in.'
           : 'The studio server is offline, so new players cannot be created right now. Players who already have a key in this browser can still play.',
       );
     }

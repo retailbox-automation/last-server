@@ -49,10 +49,15 @@ export function storedSecret(name: string): string | null {
   return readKeys()[name] ?? null;
 }
 
-export function saveSession(s: Session): void {
+/** Keeps the key for a name without making it the current player. */
+export function rememberKey(name: string, secretKey: string): void {
   const keys = readKeys();
-  keys[s.name] = s.secretKey;
+  keys[name] = secretKey;
   write(KEYS, JSON.stringify(keys));
+}
+
+export function saveSession(s: Session): void {
+  rememberKey(s.name, s.secretKey);
   write(LAST, s.name);
 }
 

@@ -2,6 +2,7 @@
 // so pointing the game at another endpoint or contract is a configuration change.
 
 import { JsonRpcProvider } from 'near-api-js';
+import { AccountDoesNotExistError } from 'near-api-js/rpc-errors';
 import { config } from './config.ts';
 
 export const provider = new JsonRpcProvider({ url: config.rpcUrl });
@@ -26,7 +27,8 @@ export async function accountExists(accountId: string): Promise<boolean> {
     await provider.viewAccount({ accountId, blockQuery: { finality: 'optimistic' } });
     return true;
   } catch (e) {
-    if ((e as Error).name === 'AccountDoesNotExistError') return false;
+    // instanceof, not the error's name: a minified build renames classes.
+    if (e instanceof AccountDoesNotExistError) return false;
     throw e;
   }
 }
