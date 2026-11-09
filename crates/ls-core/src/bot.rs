@@ -49,12 +49,30 @@ fn choose(d: &DiveSim, style: Style) -> u8 {
             return MOVE_WAIT;
         }
         // Walk next to the nearest monster (the step that would enter it is never taken).
-        return first_step(d, false, |x, y| DIRS.iter().any(|&(_, dx, dy)| monster_here(x + dx, y + dy)))
-            .filter(|&mv| {
-                let (_, dx, dy) = DIRS[mv as usize];
-                !monster_here(d.x + dx, d.y + dy)
-            })
-            .unwrap_or(MOVE_WAIT);
+        let near_monster = |x: i32, y: i32| DIRS.iter().any(|&(_, dx, dy)| monster_here(x + dx, y + dy));
+        let not_into_monster = |&mv: &u8| {
+            let (_, dx, dy) = DIRS[mv as usize];
+            !monster_here(d.x + dx, d.y + dy)
+        };
+        if !matches!(style, Style::DieAt(_)) {
+            return first_step(d, false, near_monster).filter(not_into_monster).unwrap_or(MOVE_WAIT);
+        }
+        // DieAt never walks over a grave. If graves wall it off from every monster, it walks to
+        // a spot that changes every 50 turns (and with the gold it carries, so a retry roams
+        // elsewhere), so the greedy monsters find a way to it.
+        if let Some(mv) = first_step(d, true, near_monster).filter(not_into_monster) {
+            return mv;
+        }
+        let gold = count_item(&d.carried, ITEM_GOLD) as usize;
+        let mut cell = ((d.turn / 50) as usize * 397 + d.level.graves.len() * 211 + gold * 131 + 13) % CELLS;
+        for _ in 0..CELLS {
+            if d.level.tiles[cell] == FLOOR {
+                break;
+            }
+            cell = (cell + 1) % CELLS;
+        }
+        let spot = ((cell as i32) % W, (cell as i32) / W);
+        return first_step(d, true, |x, y| (x, y) == spot).filter(not_into_monster).unwrap_or(MOVE_WAIT);
     }
     let avoid_graves = matches!(style, Style::DieAt(_));
     let max = d.max_hp();
@@ -100,7 +118,8 @@ fn choose(d: &DiveSim, style: Style) -> u8 {
     let max_depth = if let Style::DieAt(depth) = style { depth } else { BOT_MAX_DEPTH };
     if d.hp >= max && d.depth < max_depth {
         let stairs = d.level.stairs;
-        if let Some(mv) = first_step(d, avoid_graves, |x, y| (x, y) == stairs) {
+        let to_stairs = |x: i32, y: i32| (x, y) == stairs;
+        if let Some(mv) = first_step(d, avoid_graves, to_stairs).or_else(|| first_step(d, false, to_stairs)) {
             return mv;
         }
     }

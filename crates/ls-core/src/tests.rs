@@ -588,3 +588,28 @@ fn expired_grave_spot_is_seeded_and_inside() {
         assert!(x >= 1 && i32::from(x) < W - 1 && y >= 1 && i32::from(y) < H - 1);
     }
 }
+
+#[test]
+fn die_at_leaves_a_grave_at_its_depth_without_looting() {
+    let mut graves = vec![];
+    for (i, depth) in (1..=6u32).enumerate() {
+        graves.push(Grave { id: i as u32, depth, x: 10, y: 10, items: vec![(ITEM_GOLD, 3)] });
+    }
+    let entry = DiveEntry { start_depth: 1, inventory: vec![(ITEM_GOLD, 1)], graves };
+    let (mut at_target, mut died) = (0, 0);
+    for seed in 0..20u64 {
+        for target in [1u32, 3, 6] {
+            let moves = generate_moves(seed, &entry, 3000, Style::DieAt(target));
+            let out = run_dive(seed, &entry, &moves);
+            // Graves are walked around in the doomed phase; on the way down a grave that blocks
+            // the only corridor to the stairs is crossed (and looted).
+            if target == 1 {
+                assert!(out.looted_graves.is_empty(), "seed {seed}: looted {:?}", out.looted_graves);
+            }
+            died += u32::from(out.died);
+            at_target += u32::from(out.died && out.final_depth == target);
+        }
+    }
+    std::println!("DieAt: died {died}/60, at the target depth {at_target}/60");
+    assert!(at_target >= 45, "died at the target depth in {at_target}/60 dives");
+}
