@@ -16,7 +16,7 @@
 // Expected contract API: SPEC-CORE-V1 section A (start_dive, settle_dive, active_dive, player, current_day).
 
 import { readFileSync } from 'node:fs';
-import { SURFACE_NOW, dieWithLoot, lootGrave } from './grave_bot.mjs';
+import { SURFACE_NOW, graveFor, lootGrave } from './grave_bot.mjs';
 
 const relayerDir = new URL('../relayer/', import.meta.url);
 const near = await import(new URL('node_modules/near-api-js/lib/index.js', relayerDir).href);
@@ -149,8 +149,9 @@ try {
   check(active && String(active.dive_id) === String(ticket.dive_id), 'active_dive view shows the ticket');
 
   // 4. settle_dive through the relayer: a log that gets A killed holding loot (or one that climbs straight out)
-  const plan = w ? dieWithLoot(w, ticket.seed, entry) : null;
-  if (!plan) todo(`grave path: no "pick up, then die" plan on today's map for A (seed ${ticket.seed}); A climbs straight out instead, grave path not tested`);
+  // Pick something up, then get killed or quit (a log ending inside = a death there), whichever is shorter.
+  const plan = w ? graveFor(w, ticket.seed, entry) : null;
+  if (!plan) todo(`grave path: no "pick up, then die or quit" plan on today's map for A (seed ${ticket.seed}); A climbs straight out instead, grave path not tested`);
   const moves = plan ? plan.moves : SURFACE_NOW;
   const outcome = await settleDive(a, ticket, moves, 'A');
   if (!plan) check(outcome?.returned === true && outcome.died === false, 'A climbed out on the way up: returned, not a death', JSON.stringify(outcome)?.slice(0, 160));
@@ -169,11 +170,18 @@ try {
 
   // 6. the grave path: A's grave is on the chain, player B walks to it and takes it
   if (plan && outcome?.died) {
-    check(outcome.quit === false && outcome.returned === false, 'A was killed (not a quit)');
+    if (plan.outcome.quit) {
+      check(outcome.quit === true && outcome.died === true && !outcome.returned && Array.isArray(outcome.death_pos), 'A died (quit): the log ended inside the dungeon', `death_pos ${JSON.stringify(outcome.death_pos)}`);
+    } else {
+      check(outcome.quit === false && outcome.returned === false, 'A was killed (not a quit)');
+    }
     check(Number(me.deaths) === 1, 'player view counts the death', JSON.stringify(me));
     const here = await view('graves', { depth: outcome.final_depth });
     const grave = here.find((g) => g.owner_id === accountId && String(g.dive_id) === String(ticket.dive_id));
     check(grave !== undefined, `A's grave is listed at depth ${outcome.final_depth}`, JSON.stringify(grave ?? here.length));
+    if (grave && outcome.quit) {
+      check(grave.x === outcome.death_pos[0] && grave.y === outcome.death_pos[1], 'grave created at death_pos', `grave (${grave.x}, ${grave.y})`);
+    }
     if (grave) {
       const b = await newPlayer('e2e-b');
       const bDive = await startDive(b, 'B');
