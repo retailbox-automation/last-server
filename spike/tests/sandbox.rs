@@ -11,7 +11,7 @@
 
 use base64::Engine;
 use ls_core::bot::{generate_moves, Style, BOT_MAX_DEPTH};
-use ls_core::rules::GRAVES_PER_DEPTH;
+use ls_core::rules::{EXPIRE_GRACE_SECONDS, GRAVES_PER_DEPTH};
 use ls_core::{run_dive, DiveEntry, DiveOutcome, MAX_MOVES};
 use near_workspaces::network::Sandbox;
 use near_workspaces::result::ExecutionFinalResult;
@@ -309,6 +309,10 @@ async fn survive_banks_finds_and_locked_items_stay_put() -> R<()> {
     let env = setup().await?;
     let alice = new_account(&env, "alice").await?;
     let bob = new_account(&env, "bob").await?;
+    // Items go only to accounts that started a dive: bob plays an empty one first.
+    let bob_ticket = start(&env, &bob, &[]).await?;
+    let bob_entry: DiveEntry = view(&env, "dive_entry", json!({ "account_id": bob.id() })).await?;
+    settle(&env, &bob, &bob_ticket, &bob_entry, &[]).await?;
 
     let day: u32 = view(&env, "current_day", json!({})).await?;
     let seed: String = view(&env, "day_seed", json!({ "day": day })).await?;
@@ -509,11 +513,21 @@ async fn blue_key_opens_the_vault_and_mints_a_gem() -> R<()> {
     check_counters(&env).await
 }
 
+/// An open dive expires into a grave once its day is over and `EXPIRE_GRACE_SECONDS` have passed
+/// since it started. A dive started shortly before midnight (UTC) is not expired right after it,
+/// and its owner can still settle then. One day jump serves all of it: the sandbox moves about
+/// 0.3 s of chain time per fast-forwarded block.
 #[tokio::test]
 async fn an_open_dive_expires_into_a_grave_the_next_day() -> R<()> {
+    const MIN: u64 = 60 * NS;
+    const DAY: u64 = 86_400 * NS;
+    let grace = EXPIRE_GRACE_SECONDS * NS;
+    assert!(grace >= 120 * MIN, "the test needs a grace of at least two hours");
     let env = setup().await?;
     let alice = new_account(&env, "alice").await?;
     let bob = new_account(&env, "bob").await?;
+    let carol = new_account(&env, "carol").await?;
+    let dave = new_account(&env, "dave").await?;
     let first = dive(&env, &alice, &[], Style::Survivor, 600).await?;
     assert!(!first.outcome.died);
     let gold = balances(&env, alice.id()).await?[idx("gold")];
@@ -524,20 +538,39 @@ async fn an_open_dive_expires_into_a_grave_the_next_day() -> R<()> {
     let err = err_text(res);
     assert!(err.contains("the dive's day is not over yet"), "{err}");
 
-    // Move the sandbox clock past the day boundary.
-    let day0: u32 = view(&env, "current_day", json!({})).await?;
-    let t0 = std::time::Instant::now();
-    let mut blocks = 0u64;
-    loop {
-        env.worker.fast_forward(20_000).await?;
-        blocks += 20_000;
-        let day: u32 = view(&env, "current_day", json!({})).await?;
-        if day > day0 {
-            println!("day {day0} -> {day} after fast_forward({blocks}) in {:.1}s", t0.elapsed().as_secs_f64());
-            break;
-        }
-        assert!(blocks < 1_000_000, "fast_forward did not move the day");
+    // Shortly before the next midnight carol and dave start dives.
+    let now = now_ns(&env).await?;
+    let mut midnight = (now / DAY + 1) * DAY;
+    if midnight - now < 15 * MIN {
+        midnight += DAY;
     }
+    let lead = (grace - 60 * MIN).min(midnight - now - 5 * MIN);
+    let t0 = std::time::Instant::now();
+    advance_to(&env, midnight - lead).await?;
+    let carol_ticket = start(&env, &carol, &[]).await?;
+    let dave_ticket = start(&env, &dave, &[]).await?;
+    let late = now_ns(&env).await?;
+    assert!(late < midnight, "the late dives started after midnight ({late} >= {midnight})");
+
+    // 20 minutes after midnight: the day is over, the grace of the late dives is not.
+    let t = advance_to(&env, midnight + 20 * MIN).await?;
+    println!("fast-forwarded to {:.0} min past midnight in {:.0}s", (t - midnight) as f64 / MIN as f64, t0.elapsed().as_secs_f64());
+    assert!(t < midnight - lead + grace - 10 * MIN, "overshot the late dives' grace: {t}");
+    let day: u32 = view(&env, "current_day", json!({})).await?;
+    assert!(day > ticket.day, "day {day}, ticket day {}", ticket.day);
+    let res = call(&env, &bob, "expire_dive", json!({ "account_id": carol.id() }), 0).await?;
+    let err = err_text(res);
+    assert!(err.contains("the dive started less than"), "{err}");
+    let active: Option<Ticket> = view(&env, "active_dive", json!({ "account_id": carol.id() })).await?;
+    assert_eq!(active.expect("carol's dive is still open").dive_id, carol_ticket.dive_id);
+    // The owner finishing late still settles.
+    let entry: DiveEntry = view(&env, "dive_entry", json!({ "account_id": dave.id() })).await?;
+    let moves = generate_moves(dave_ticket.seed(), &entry, 300, Style::Survivor);
+    settle(&env, &dave, &dave_ticket, &entry, &moves).await?;
+
+    // After the grace of the late dives (alice started earlier) anyone may expire both.
+    let t = advance_to(&env, late + grace + MIN).await?;
+    println!("expiring {:.2} h after the late start", (t - late) as f64 / (60 * MIN) as f64);
     let res = call(&env, &bob, "expire_dive", json!({ "account_id": alice.id() }), 0).await?;
     let ev = events_of(&res);
     res.into_result()?;
@@ -547,19 +580,23 @@ async fn an_open_dive_expires_into_a_grave_the_next_day() -> R<()> {
     assert_eq!(expired["data"][0]["account_id"], alice.id().as_str());
     assert_eq!(expired["data"][0]["expired_by"], bob.id().as_str());
     assert_eq!(expired["data"][0]["dive_id"], ticket.dive_id);
-    let grave_id = expired["data"][0]["grave_id"].as_u64().expect("grave") as u32;
+    let grave_id = expired["data"][0]["grave_id"].as_u64().expect("grave");
     let graves: Vec<Value> = view(&env, "graves", json!({ "depth": ticket.start_depth })).await?;
-    assert_eq!(graves.len(), 1);
-    assert_eq!(graves[0]["id"], grave_id);
-    assert_eq!(graves[0]["items"], json!([["gold", gold.to_string()]]), "the whole loadout, no toll");
+    let grave = graves.iter().find(|g| g["id"] == grave_id).expect("alice's grave at the start depth");
+    assert_eq!(grave["owner_id"], alice.id().as_str());
+    assert_eq!(grave["items"], json!([["gold", gold.to_string()]]), "the whole loadout, no toll");
     let (x, y) = ls_core::expired_grave_spot(ticket.seed(), ticket.dive_id.parse()?);
-    assert_eq!((graves[0]["x"].as_u64().unwrap() as u8, graves[0]["y"].as_u64().unwrap() as u8), (x, y));
+    assert_eq!((grave["x"].as_u64().unwrap() as u8, grave["y"].as_u64().unwrap() as u8), (x, y));
     assert_eq!(balances(&env, alice.id()).await?[idx("gold")], 0);
     let active: Option<Value> = view(&env, "active_dive", json!({ "account_id": alice.id() })).await?;
     assert!(active.is_none());
     let p: Value = view(&env, "player", json!({ "account_id": alice.id() })).await?;
     assert_eq!(p["deaths"], 1);
     assert!(p["locked"].as_array().unwrap().is_empty());
+    let res = call(&env, &bob, "expire_dive", json!({ "account_id": carol.id() }), 0).await?;
+    res.into_result()?;
+    let active: Option<Value> = view(&env, "active_dive", json!({ "account_id": carol.id() })).await?;
+    assert!(active.is_none());
     // A settle after expiry has nothing to settle.
     let res = call(&env, &alice, "settle_dive", settle_args(&ticket, &[0, 1]), 0).await?;
     assert!(err_text(res).contains("no active dive for this account"));
@@ -874,5 +911,116 @@ async fn bench_v1_gas() -> R<()> {
     std::fs::write(docs_dir().join("GAS-RESULTS-V1.md"), md)?;
     println!("worst 300-move run with 100 graves: {worst_300_graves:.3} Tgas ({})", if pass { "PASS" } else { "FAIL" });
     assert!(pass, "300 moves with 100 graves cost {worst_300_graves:.3} Tgas > 10");
+    check_counters(&env).await
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fixes after the review of 2026-11-09 (C3 transfers, C4 expiry grace)
+// ---------------------------------------------------------------------------------------------
+
+const NS: u64 = 1_000_000_000;
+
+/// Timestamp (unix ns) of the sandbox's latest block.
+async fn now_ns(env: &Env) -> R<u64> {
+    Ok(env.worker.view_block().await?.timestamp())
+}
+
+/// Fast-forwards the sandbox until its latest block is at or past `target_ns`. The time per block
+/// is measured on the way, so it lands a few blocks past the target.
+async fn advance_to(env: &Env, target_ns: u64) -> R<u64> {
+    let mut now = now_ns(env).await?;
+    let mut ns_per_block = 0u64;
+    let mut rounds = 0;
+    while now < target_ns {
+        rounds += 1;
+        assert!(rounds <= 60, "advance_to did not reach {target_ns} (now {now})");
+        let blocks = if ns_per_block == 0 { 100 } else { ((target_ns - now) / ns_per_block).clamp(1, 500_000) };
+        env.worker.fast_forward(blocks).await?;
+        let after = now_ns(env).await?;
+        if after > now {
+            ns_per_block = ((after - now) / blocks).max(1);
+        }
+        now = after;
+    }
+    Ok(now)
+}
+
+/// Items go only to accounts that have started a dive. Otherwise anyone holding one gold could
+/// send 1-unit transfers to made-up account ids, and the world contract would pay the storage of
+/// every new balance entry.
+#[tokio::test]
+async fn transfers_go_only_to_accounts_that_started_a_dive() -> R<()> {
+    let env = setup().await?;
+    let alice = new_account(&env, "alice").await?;
+    let bob = new_account(&env, "bob").await?;
+    let run = dive(&env, &alice, &[], Style::Survivor, 600).await?;
+    assert!(!run.outcome.died);
+    let gold = balances(&env, alice.id()).await?[idx("gold")];
+    assert!(gold >= 2, "alice found gold: {gold}");
+    let made_up: AccountId = "made-up-receiver.test.near".parse()?;
+    // A made-up account id, and a real account that never started a dive.
+    for receiver in [&made_up, bob.id()] {
+        let res = call(&env, &alice, "mt_transfer", json!({ "receiver_id": receiver, "token_id": "gold", "amount": "1" }), 1).await?;
+        let err = err_text(res);
+        assert!(err.contains("the receiver has never started a dive"), "{receiver}: {err}");
+        let res = call(&env, &alice, "mt_batch_transfer", json!({ "receiver_id": receiver, "token_ids": ["gold"], "amounts": ["1"] }), 1).await?;
+        let err = err_text(res);
+        assert!(err.contains("the receiver has never started a dive"), "{receiver}: {err}");
+        assert_eq!(balances(&env, receiver).await?, vec![0; TOKENS.len()]);
+    }
+    assert_eq!(balances(&env, alice.id()).await?[idx("gold")], gold);
+    // Once bob has started (and settled) a dive, he can receive.
+    let ticket = start(&env, &bob, &[]).await?;
+    let entry: DiveEntry = view(&env, "dive_entry", json!({ "account_id": bob.id() })).await?;
+    settle(&env, &bob, &ticket, &entry, &[]).await?;
+    call(&env, &alice, "mt_transfer", json!({ "receiver_id": bob.id(), "token_id": "gold", "amount": "1" }), 1).await?.into_result()?;
+    assert_eq!(balances(&env, bob.id()).await?[idx("gold")], 1);
+    assert_eq!(balances(&env, alice.id()).await?[idx("gold")], gold - 1);
+    check_counters(&env).await
+}
+
+/// The contract applies the endings of the rules: a bot that walks back up banks its finds, a log
+/// cut one move before death leaves a grave instead of a stash, and an empty log is a quit at the
+/// start depth that puts the loadout (minus the toll) into a grave.
+#[tokio::test]
+async fn a_log_that_stops_inside_the_dungeon_is_a_death() -> R<()> {
+    let env = setup().await?;
+    let alice = new_account(&env, "alice").await?;
+    let bob = new_account(&env, "bob").await?;
+    for who in [&alice, &bob] {
+        let run = dive(&env, who, &[], Style::Survivor, 600).await?;
+        assert!(run.outcome.returned && !run.outcome.died, "{}: {:?}", who.id(), run.outcome);
+    }
+
+    // Alice carries everything and stops one move before the doomed log would kill her.
+    let stash = balances(&env, alice.id()).await?;
+    let loadout: Vec<(&str, u128)> = TOKENS.iter().map(|t| (*t, stash[idx(t)])).filter(|e| e.1 > 0).collect();
+    assert!(!loadout.is_empty());
+    let ticket = start(&env, &alice, &loadout).await?;
+    let entry: DiveEntry = view(&env, "dive_entry", json!({ "account_id": alice.id() })).await?;
+    let doomed = generate_moves(ticket.seed(), &entry, 2000, Style::Doomed);
+    let dead = run_dive(ticket.seed(), &entry, &doomed);
+    assert!(dead.died && !dead.quit, "{dead:?}");
+    let cut = &doomed[..dead.moves_applied as usize - 1];
+    let (out, _, ev) = settle(&env, &alice, &ticket, &entry, cut).await?;
+    assert!(out.died && out.quit && !out.returned, "{out:?}");
+    assert!(names(&ev).contains(&"lastserver:grave_created".to_string()), "{:?}", names(&ev));
+    assert_eq!(balances(&env, alice.id()).await?, vec![0; TOKENS.len()], "nothing banked");
+    let (gx, gy) = out.death_pos.expect("a quit has a position");
+    let graves: Vec<Value> = view(&env, "graves", json!({ "depth": out.final_depth })).await?;
+    assert!(graves.iter().any(|g| g["owner_id"] == alice.id().as_str() && g["x"] == gx && g["y"] == gy), "{graves:?}");
+
+    // Bob starts with his gold and settles an empty log.
+    let gold = balances(&env, bob.id()).await?[idx("gold")];
+    assert!(gold >= 10, "bob found {gold} gold");
+    let ticket = start(&env, &bob, &[("gold", gold)]).await?;
+    let entry: DiveEntry = view(&env, "dive_entry", json!({ "account_id": bob.id() })).await?;
+    let (out, _, _) = settle(&env, &bob, &ticket, &entry, &[]).await?;
+    assert!(out.died && out.quit && out.final_depth == ticket.start_depth, "{out:?}");
+    let toll = gold / u128::from(ls_core::rules::DEATH_TOLL_GOLD_DIV);
+    assert_eq!(out.dropped_into_grave, vec![(ls_core::ITEM_GOLD, (gold - toll) as u32)]);
+    assert_eq!(balances(&env, bob.id()).await?[idx("gold")], 0);
+    let p: Value = view(&env, "player", json!({ "account_id": bob.id() })).await?;
+    assert_eq!(p["deaths"], 1);
     check_counters(&env).await
 }
