@@ -23,6 +23,19 @@ Day 1 (2026-11-07): repository, design, gas spike. Nothing here is playable yet.
 4. **The default testnet RPC keeps about 35 hours of history** (211 112 blocks on 2026-11-07); older blocks and transactions answer `UNKNOWN_BLOCK` there and are served by `archival-rpc.testnet.near.org`. The same endpoint answered `429 TooManyRequests` during a burst of test transactions. Links to transactions in this README point to an explorer; game statistics are kept as counters in the contract.
 5. **Test tooling note:** `near-workspaces` 0.24 `total_gas_burnt` does not include the final gas-refund receipt (about 0.22 Tgas per call on testnet, visible through the archival RPC).
 
+## Rules and contract (core v1)
+
+- **All numbers of the game are in one file:** [crates/ls-core/src/rules.rs](crates/ls-core/src/rules.rs). Its sha256 is reported by the contract (`core_version().rules_sha256`) and by the client, so you can check both run the same rules: `shasum -a 256 crates/ls-core/src/rules.rs`.
+- **Items** (NEP-245 token ids): `gold`, `blade` (wears out inside a dive, a broken blade is burned), `plate`, `potion` (drunk and burned), `blue_key` (drops from depth 5, opens the one vault at depth 7 and is used up), `gem` (only in that vault).
+- **A dive is two calls.** `start_dive(loadout)` locks what you carry and returns a ticket with the day's seed, chosen by the contract. `settle_dive(dive_id, moves)` re-runs the rules on that seed and your move log (at most 4000 moves) and applies the result: finds are minted, graves you emptied move to you (at most 50 per dive; the rest stay where they are), and what you carried is banked only if the log ends with a return to the surface: walk back to where you came down to the current depth and take the way up (move byte 6). You can surface from the arrival tile of the current depth; leaving it to loot is the risk. A log that ends anywhere else, an empty log included, counts as a death where it ends: what you carried becomes your grave. A dive left open past its day can be closed by anyone with `expire_dive(account_id)` once 4 hours have passed since it started; it counts as a death too, with the same death toll.
+- **Graves** are stored per depth, at most 10 per depth (the oldest crumbles and its items burn), and a dive reads only the graves of the depths it enters, so its gas grows with the graves on those depths and with the graves it loots, not with every grave on the server: [docs/spike/GAS-RESULTS-V1.md](docs/spike/GAS-RESULTS-V1.md).
+- **NEP-245 is a subset, written by hand from the spec:** `mt_transfer`, `mt_batch_transfer` (exactly 1 yoctoNEAR), `mt_balance_of`, `mt_batch_balance_of`, `mt_supply`, `mt_batch_supply`, `mt_token`, and the `mt_mint` / `mt_transfer` / `mt_burn` events. Not implemented: `mt_transfer_call` / `mt_resolve_transfer` (no other contract in this game receives items, and the cross-contract refund path is the riskiest part of the standard to hand-write in a week), approvals (no marketplace: items have use, not a price) and NEP-145 storage deposits (the world contract pays for its own state on testnet, so items can be transferred only to accounts that have started a dive). Items carried in an active dive cannot be transferred.
+- **Game events** use NEP-297 with `standard: "lastserver"`, `version: "1.0.0"`: `dive_started`, `dive_settled`, `grave_created`, `grave_looted`, `grave_crumbled`, `dive_expired`.
+
+## Limits
+
+- Storage for the player and balance records of new accounts is paid by the world contract (`start_dive` comes through the relayer with zero deposit). This is deliberate on testnet.
+
 ## Network
 
 NEAR testnet only. No mainnet, no real money.

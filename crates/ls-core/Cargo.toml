@@ -1,6 +1,6 @@
 [package]
 name = "ls-core"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 license.workspace = true
 description = "Deterministic dungeon rules for Last Server, shared by the contract and the browser"
@@ -14,3 +14,9 @@ bot = []
 
 [dependencies]
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+
+[build-dependencies]
+sha2 = "0.10"
+
+[dev-dependencies]
+serde_json = "1"
