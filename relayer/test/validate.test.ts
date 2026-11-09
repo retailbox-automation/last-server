@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { actions, encodeSignedDelegate } from 'near-api-js';
-import { MAX_GAS, Rejection, playerLabel, playerNameProblem, validateSignedDelegate } from '../src/validate.ts';
+import {
+  DELEGATE_MAX_TTL_BLOCKS,
+  DELEGATE_MIN_BLOCKS_LEFT,
+  MAX_GAS,
+  Rejection,
+  checkDelegateWindow,
+  playerLabel,
+  playerNameProblem,
+  validateSignedDelegate,
+} from '../src/validate.ts';
 import { PARENT, WORLD, delegateBase64, policy, signDelegate, throwawayKey } from './helpers.ts';
 
 async function rejected(input: unknown): Promise<Rejection> {
@@ -38,6 +47,36 @@ describe('validateSignedDelegate: accepted', () => {
   it('accepts gas below the ceiling', async () => {
     const v = validateSignedDelegate(await delegateBase64({ gas: 30_000_000_000_000n }), policy());
     assert.equal(v.gas, 30_000_000_000_000n);
+  });
+});
+
+describe('checkDelegateWindow', () => {
+  const code = (max: bigint, height: bigint): string | null => {
+    try {
+      checkDelegateWindow(max, height);
+      return null;
+    } catch (e) {
+      assert.ok(e instanceof Rejection);
+      assert.equal(e.status, 403);
+      return e.code;
+    }
+  };
+
+  it('passes the maxBlockHeight through from the signed bytes', async () => {
+    const v = validateSignedDelegate(await delegateBase64({ maxBlockHeight: 123_456n }), policy());
+    assert.equal(v.maxBlockHeight, 123_456n);
+  });
+
+  it('expired, about to expire, fine, too long', () => {
+    const h = 1_000n;
+    assert.equal(code(h - 1n, h), 'delegate_expired');
+    assert.equal(code(h, h), 'delegate_expired');
+    assert.equal(code(h + DELEGATE_MIN_BLOCKS_LEFT - 1n, h), 'delegate_expired');
+    assert.equal(code(h + DELEGATE_MIN_BLOCKS_LEFT, h), null);
+    assert.equal(code(h + 100n, h), null); // what the web signs
+    assert.equal(code(h + DELEGATE_MAX_TTL_BLOCKS, h), null);
+    assert.equal(code(h + DELEGATE_MAX_TTL_BLOCKS + 1n, h), 'delegate_ttl_too_long');
+    assert.equal(code(2n ** 64n - 1n, h), 'delegate_ttl_too_long');
   });
 });
 

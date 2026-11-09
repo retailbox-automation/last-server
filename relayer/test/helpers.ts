@@ -11,6 +11,10 @@ import type { PolicyConfig } from '../src/config.ts';
 
 export const PARENT = 'lastserver.testnet';
 export const WORLD = 'world.lastserver.testnet';
+export const NEAR = 10n ** 24n;
+/** Chain height the fake chain reports; DEFAULT_MAX_BLOCK_HEIGHT is 100 blocks past it, like the web. */
+export const HEIGHT = 999_900n;
+export const DEFAULT_MAX_BLOCK_HEIGHT = 1_000_000n;
 
 export function policy(over: Partial<PolicyConfig> = {}): PolicyConfig {
   return {
@@ -18,6 +22,8 @@ export function policy(over: Partial<PolicyConfig> = {}): PolicyConfig {
     worldContractId: WORLD,
     allowedOrigin: '*',
     trustProxyHops: 0,
+    signupFundingYocto: NEAR / 5n,
+    minStudioBalanceYocto: NEAR,
     limits: { ...DEFAULT_LIMITS },
     ...over,
   };
@@ -41,6 +47,7 @@ export interface DelegateSpec {
   /** Public key written into the delegate action if different from the signer's. */
   publicKeyOf?: KeyPair;
   nonce?: bigint;
+  maxBlockHeight?: bigint;
 }
 
 export async function signDelegate(spec: DelegateSpec = {}): Promise<SignedDelegate> {
@@ -59,7 +66,7 @@ export async function signDelegate(spec: DelegateSpec = {}): Promise<SignedDeleg
     receiverId: spec.receiver ?? WORLD,
     actions: callActions,
     nonce: spec.nonce ?? 7n,
-    maxBlockHeight: 1_000_000n,
+    maxBlockHeight: spec.maxBlockHeight ?? DEFAULT_MAX_BLOCK_HEIGHT,
     publicKey: (spec.publicKeyOf ?? key).getPublicKey(),
   });
   if (spec.publicKeyOf) {

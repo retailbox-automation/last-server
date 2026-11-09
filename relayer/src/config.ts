@@ -1,5 +1,7 @@
 // Relayer configuration. Secrets come only from the environment and never reach logs or responses.
 
+import { parseNearAmount } from 'near-api-js';
+
 export interface Limits {
   relaySenderMax: number;
   relaySenderWindowS: number;
@@ -9,6 +11,9 @@ export interface Limits {
   signupIpWindowS: number;
   signupGlobalMax: number;
   signupGlobalWindowS: number;
+  /** Cheap reads that still cost an RPC call: GET /health and the name check of POST /signup. */
+  lookupIpMax: number;
+  lookupIpWindowS: number;
 }
 
 /** Everything the HTTP layer needs; contains no secret. */
@@ -20,6 +25,10 @@ export interface PolicyConfig {
   allowedOrigin: string;
   /** How many reverse proxies sit in front of us; 0 = trust only the socket address. */
   trustProxyHops: number;
+  /** NEAR each new player account receives (yocto). */
+  signupFundingYocto: bigint;
+  /** Signup is refused when it would leave the studio account with less than this (yocto). */
+  minStudioBalanceYocto: bigint;
   limits: Limits;
 }
 
@@ -28,7 +37,6 @@ export interface Config extends PolicyConfig {
   rpcUrl: string;
   port: number;
   host: string;
-  signupFundingNear: string;
 }
 
 export const DEFAULT_RPC_URL = 'https://test.rpc.fastnear.com';
@@ -40,9 +48,15 @@ export const DEFAULT_LIMITS: Limits = {
   relayIpWindowS: 60,
   signupIpMax: 5,
   signupIpWindowS: 3600,
-  signupGlobalMax: 200,
+  // 20 x 0.2 NEAR = 4 testnet NEAR a day; the balance floor below stops signup before the studio runs dry.
+  signupGlobalMax: 20,
   signupGlobalWindowS: 86_400,
+  lookupIpMax: 30,
+  lookupIpWindowS: 60,
 };
+
+export const DEFAULT_SIGNUP_FUNDING_NEAR = '0.2';
+export const DEFAULT_MIN_STUDIO_BALANCE_NEAR = '1';
 
 function intFrom(env: NodeJS.ProcessEnv, name: string, fallback: number, problems: string[]): number {
   const raw = env[name];
@@ -53,6 +67,16 @@ function intFrom(env: NodeJS.ProcessEnv, name: string, fallback: number, problem
     return fallback;
   }
   return n;
+}
+
+function nearFrom(env: NodeJS.ProcessEnv, name: string, fallback: string, problems: string[]): bigint {
+  const raw = env[name] || fallback;
+  const yocto = /^\d+(\.\d+)?$/.test(raw) ? parseNearAmount(raw as `${number}`) : null;
+  if (yocto === null) {
+    problems.push(`${name} must be a NEAR amount like 0.2`);
+    return 0n;
+  }
+  return BigInt(yocto);
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -78,6 +102,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     signupIpWindowS: intFrom(env, 'RATE_SIGNUP_IP_WINDOW_S', d.signupIpWindowS, problems),
     signupGlobalMax: intFrom(env, 'RATE_SIGNUP_GLOBAL_MAX', d.signupGlobalMax, problems),
     signupGlobalWindowS: intFrom(env, 'RATE_SIGNUP_GLOBAL_WINDOW_S', d.signupGlobalWindowS, problems),
+    lookupIpMax: intFrom(env, 'RATE_LOOKUP_IP_MAX', d.lookupIpMax, problems),
+    lookupIpWindowS: intFrom(env, 'RATE_LOOKUP_IP_WINDOW_S', d.lookupIpWindowS, problems),
   };
   const config: Config = {
     parentId,
@@ -88,7 +114,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     host: env.HOST || '0.0.0.0',
     allowedOrigin: env.ALLOWED_ORIGIN || '*',
     trustProxyHops: intFrom(env, 'TRUST_PROXY_HOPS', 0, problems),
-    signupFundingNear: env.SIGNUP_FUNDING_NEAR || '0.2',
+    signupFundingYocto: nearFrom(env, 'SIGNUP_FUNDING_NEAR', DEFAULT_SIGNUP_FUNDING_NEAR, problems),
+    minStudioBalanceYocto: nearFrom(env, 'MIN_STUDIO_BALANCE_NEAR', DEFAULT_MIN_STUDIO_BALANCE_NEAR, problems),
     limits,
   };
   if (problems.length > 0) throw new Error(`Invalid relayer configuration: ${problems.join('; ')}`);

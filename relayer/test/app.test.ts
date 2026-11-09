@@ -7,7 +7,7 @@ import { ChainError } from '../src/chain.ts';
 import type { AccountStatus, Chain, RelayResult } from '../src/chain.ts';
 import { DEFAULT_LIMITS } from '../src/config.ts';
 import type { Limits } from '../src/config.ts';
-import { PARENT, WORLD, delegateBase64, policy, throwawayKey } from './helpers.ts';
+import { DEFAULT_MAX_BLOCK_HEIGHT, HEIGHT, NEAR, PARENT, WORLD, delegateBase64, policy, throwawayKey } from './helpers.ts';
 
 class FakeChain implements Chain {
   accounts = new Map<string, string>(); // accountId -> public key
@@ -16,13 +16,23 @@ class FakeChain implements Chain {
   relayResult: RelayResult = { txHash: 'TXHASH1', ok: true, resultBase64: Buffer.from('{"died":false}').toString('base64') };
   failNext: ChainError | null = null;
   healthy = true;
+  height = HEIGHT;
+  balance = 5n * NEAR;
+  heightReads = 0;
+  balanceReads = 0;
+  /** Status reported after createPlayer failed with account_exists (simulates a lagging first read). */
+  statusAfterExists: AccountStatus | null = null;
 
   async accountStatus(accountId: string, publicKey: string): Promise<AccountStatus> {
+    if (this.statusAfterExists !== null && this.created.includes('!exists')) return this.statusAfterExists;
     const k = this.accounts.get(accountId);
     return k === undefined ? 'absent' : k === publicKey ? 'has_key' : 'other_key';
   }
   async createPlayer(accountId: string, publicKey: string): Promise<{ txHash: string }> {
-    if (this.failNext) throw this.failNext;
+    if (this.failNext) {
+      if (this.failNext.code === 'account_exists') this.created.push('!exists');
+      throw this.failNext;
+    }
     this.accounts.set(accountId, publicKey);
     this.created.push(accountId);
     return { txHash: 'CREATE1' };
@@ -32,9 +42,15 @@ class FakeChain implements Chain {
     this.relayed.push(signed.delegateAction.senderId);
     return this.relayResult;
   }
-  async health() {
+  async blockHeight() {
+    this.heightReads++;
     if (!this.healthy) throw new ChainError('chain_error', 'rpc down');
-    return { blockHeight: 123, balanceNear: '12.5' };
+    return this.height;
+  }
+  async studioBalance() {
+    this.balanceReads++;
+    if (!this.healthy) throw new ChainError('chain_error', 'rpc down');
+    return this.balance;
   }
 }
 
@@ -78,8 +94,30 @@ describe('GET /health', () => {
     assert.equal(b.ok, true);
     assert.equal(b.parent, PARENT);
     assert.equal(b.world, WORLD);
-    assert.equal(b.blockHeight, 123);
+    assert.equal(b.blockHeight, Number(HEIGHT));
+    assert.equal(b.funds, 'ok');
     assert.ok(!JSON.stringify(b).includes('secret'));
+    // A coarse flag, not the exact studio balance.
+    assert.ok(!('balanceNear' in b) && !JSON.stringify(b).includes(String(5n * NEAR)));
+  });
+
+  it('funds is "low" when the studio cannot fund one more player above the floor', async () => {
+    const chain = new FakeChain();
+    chain.balance = NEAR + NEAR / 10n; // floor 1 NEAR + 0.2 NEAR funding needed
+    const { base } = await start({ chain });
+    assert.equal(((await (await fetch(`${base}/health`)).json()) as any).funds, 'low');
+  });
+
+  it('is rate limited per IP and cached, so it cannot be used to burn the RPC budget', async () => {
+    const { base, chain, clock } = await start({ limits: { lookupIpMax: 3 } });
+    for (let i = 0; i < 3; i++) assert.equal((await fetch(`${base}/health`)).status, 200);
+    assert.equal(chain.balanceReads, 1);
+    const limited = await fetch(`${base}/health`);
+    assert.equal(limited.status, 429);
+    assert.ok(Number(limited.headers.get('retry-after')) >= 1);
+    clock.advance(DEFAULT_LIMITS.lookupIpWindowS * 1000 + 1);
+    assert.equal((await fetch(`${base}/health`)).status, 200);
+    assert.equal(chain.balanceReads, 2);
   });
 
   it('503 when the chain is unreachable', async () => {
@@ -182,6 +220,89 @@ describe('POST /signup', () => {
     assert.equal(r.status, 502);
     assert.equal(r.body.error.code, 'chain_error');
   });
+
+  it('503 studio_funds_low when funding a player would take the studio below the floor; relays still go', async () => {
+    const chain = new FakeChain();
+    chain.balance = NEAR + NEAR / 10n;
+    const { post } = await start({ chain });
+    const r = await post('/signup', { name: 'mara', publicKey: key() });
+    assert.equal(r.status, 503);
+    assert.equal(r.body.error.code, 'studio_funds_low');
+    assert.equal(chain.created.length, 0);
+    assert.equal((await post('/relay', { signedDelegate: await delegateBase64() })).status, 200);
+  });
+
+  it('does not spend the /relay budget of the same IP', async () => {
+    const { post } = await start({ limits: { relayIpMax: 2 } });
+    for (const name of ['aaa', 'bbb', 'ccc']) assert.equal((await post('/signup', { name, publicKey: key() })).status, 200);
+    assert.equal((await post('/relay', { signedDelegate: await delegateBase64() })).status, 200);
+  });
+
+  it('name checks have their own per-IP budget', async () => {
+    const { post } = await start({ limits: { lookupIpMax: 2 } });
+    const k = key();
+    assert.equal((await post('/signup', { name: 'mara', publicKey: k })).status, 200);
+    assert.equal((await post('/signup', { name: 'mara', publicKey: k })).status, 200);
+    const r = await post('/signup', { name: 'mara', publicKey: k });
+    assert.equal(r.status, 429);
+  });
+
+  it('a create that collides with our own earlier create is reported as done, not taken', async () => {
+    const chain = new FakeChain();
+    chain.failNext = new ChainError('account_exists', 'account already exists');
+    chain.statusAfterExists = 'has_key';
+    const { post } = await start({ chain });
+    const r = await post('/signup', { name: 'late', publicKey: key() });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.created, false);
+  });
+});
+
+describe('POST /relay: delegate lifetime (maxBlockHeight)', () => {
+  it('403 delegate_expired for a delegate past (or about to pass) its maxBlockHeight; nothing is sent', async () => {
+    const { post, chain } = await start();
+    for (const maxBlockHeight of [HEIGHT - 10n, HEIGHT, HEIGHT + 4n]) {
+      const r = await post('/relay', { signedDelegate: await delegateBase64({ maxBlockHeight }) });
+      assert.equal(r.status, 403, String(maxBlockHeight));
+      assert.equal(r.body.error.code, 'delegate_expired');
+    }
+    assert.equal(chain.relayed.length, 0);
+  });
+
+  it('403 delegate_ttl_too_long for a delegate meant to live far longer than the web signs', async () => {
+    const { post, chain } = await start();
+    for (const maxBlockHeight of [HEIGHT + 301n, 2n ** 63n]) {
+      const r = await post('/relay', { signedDelegate: await delegateBase64({ maxBlockHeight }) });
+      assert.equal(r.status, 403, String(maxBlockHeight));
+      assert.equal(r.body.error.code, 'delegate_ttl_too_long');
+    }
+    assert.equal(chain.relayed.length, 0);
+  });
+
+  it('accepts the window edges (5 and 300 blocks ahead)', async () => {
+    const { post } = await start();
+    for (const maxBlockHeight of [HEIGHT + 5n, HEIGHT + 300n]) {
+      assert.equal((await post('/relay', { signedDelegate: await delegateBase64({ maxBlockHeight }) })).status, 200);
+    }
+  });
+
+  it('reads the block height at most once a second', async () => {
+    const { post, chain, clock } = await start();
+    for (let i = 0; i < 3; i++) await post('/relay', { signedDelegate: await delegateBase64() });
+    assert.equal(chain.heightReads, 1);
+    clock.advance(1_001);
+    await post('/relay', { signedDelegate: await delegateBase64() });
+    assert.equal(chain.heightReads, 2);
+  });
+
+  it('502 (not sent) when the height cannot be read', async () => {
+    const chain = new FakeChain();
+    chain.healthy = false;
+    const { post } = await start({ chain });
+    const r = await post('/relay', { signedDelegate: await delegateBase64({ maxBlockHeight: DEFAULT_MAX_BLOCK_HEIGHT }) });
+    assert.equal(r.status, 502);
+    assert.equal(chain.relayed.length, 0);
+  });
 });
 
 describe('POST /relay', () => {
@@ -265,6 +386,16 @@ describe('POST /relay', () => {
     assert.equal(r.body.txHash, 'TXBAD');
   });
 
+  it('504 relay_unknown with the tx hash when the transaction was sent but its outcome is unknown', async () => {
+    const chain = new FakeChain();
+    chain.failNext = new ChainError('relay_unknown', 'relay outcome unknown: timeout', 'TXSENT');
+    const { post } = await start({ chain });
+    const r = await post('/relay', { signedDelegate: await delegateBase64() });
+    assert.equal(r.status, 504);
+    assert.equal(r.body.error.code, 'relay_unknown');
+    assert.equal(r.body.txHash, 'TXSENT');
+  });
+
   it('502 when the RPC fails', async () => {
     const chain = new FakeChain();
     chain.failNext = new ChainError('chain_error', 'relay failed: 429 TooManyRequests');
@@ -288,6 +419,25 @@ describe('plumbing', () => {
     const { base } = await start();
     assert.equal((await fetch(`${base}/nope`)).status, 404);
     assert.equal((await fetch(`${base}/relay`)).status, 404);
+  });
+
+  it('warns once when X-Forwarded-For arrives but no proxy is trusted', async () => {
+    const { post, logs } = await start();
+    await post('/relay', {}, { 'x-forwarded-for': '9.9.9.1' });
+    await post('/relay', {}, { 'x-forwarded-for': '9.9.9.2' });
+    const warnings = logs.filter((l) => l.ev === 'warning');
+    assert.equal(warnings.length, 1);
+    assert.match(String(warnings[0]!.message), /TRUST_PROXY_HOPS/);
+  });
+
+  it('no proxy warning without the header, or when proxies are trusted', async () => {
+    const a = await start();
+    await a.post('/relay', {});
+    assert.equal(a.logs.filter((l) => l.ev === 'warning').length, 0);
+    open?.close();
+    const b = await start({ trustProxyHops: 1 });
+    await b.post('/relay', {}, { 'x-forwarded-for': '9.9.9.1' });
+    assert.equal(b.logs.filter((l) => l.ev === 'warning').length, 0);
   });
 
   it('request log lines never contain the delegate or keys', async () => {

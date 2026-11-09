@@ -7,9 +7,13 @@ import { ChainError } from './chain.ts';
 import type { Chain } from './chain.ts';
 import type { PolicyConfig } from './config.ts';
 import { RateLimiter } from './ratelimit.ts';
-import { Rejection, playerNameProblem, validateSignedDelegate } from './validate.ts';
+import { Rejection, checkDelegateWindow, playerNameProblem, validateSignedDelegate } from './validate.ts';
 
 const MAX_BODY_BYTES = 32 * 1024;
+/** Block height is read at most this often (NEAR makes about one block a second). */
+const HEIGHT_CACHE_MS = 1_000;
+/** Studio balance and the /health answer are reused for this long. */
+const STATE_CACHE_MS = 5_000;
 
 export interface AppOptions {
   policy: PolicyConfig;
@@ -73,6 +77,35 @@ export function createApp(opts: AppOptions): Server {
   const relaySender = new RateLimiter(l.relaySenderMax, l.relaySenderWindowS, now);
   const signupIp = new RateLimiter(l.signupIpMax, l.signupIpWindowS, now);
   const signupGlobal = new RateLimiter(l.signupGlobalMax, l.signupGlobalWindowS, now);
+  const lookupIp = new RateLimiter(l.lookupIpMax, l.lookupIpWindowS, now);
+
+  /** Memoizes an async read for `ttlMs`; concurrent callers share one request; failures are not kept. */
+  function cached<T>(ttlMs: number, load: () => Promise<T>): () => Promise<T> {
+    let value: { at: number; v: T } | null = null;
+    let pending: Promise<T> | null = null;
+    return () => {
+      if (value !== null && now() - value.at < ttlMs) return Promise.resolve(value.v);
+      pending ??= load()
+        .then((v) => {
+          value = { at: now(), v };
+          return v;
+        })
+        .finally(() => {
+          pending = null;
+        });
+      return pending;
+    };
+  }
+  const blockHeight = cached(HEIGHT_CACHE_MS, () => chain.blockHeight());
+  const studioBalance = cached(STATE_CACHE_MS, () => chain.studioBalance());
+  /** Balance needed to fund one more player and keep the floor. */
+  const signupReserve = policy.minStudioBalanceYocto + policy.signupFundingYocto;
+  const healthState = cached(STATE_CACHE_MS, async () => {
+    const [height, balance] = await Promise.all([blockHeight(), studioBalance()]);
+    // A coarse flag only: the exact studio balance is nobody's business.
+    return { blockHeight: Number(height), funds: balance >= signupReserve ? 'ok' : 'low' };
+  });
+  let proxyWarningLogged = false;
 
   function limit(limiter: RateLimiter, key: string, what: string): void {
     const r = limiter.hit(key);
@@ -92,7 +125,8 @@ export function createApp(opts: AppOptions): Server {
   }
 
   async function signup(req: IncomingMessage, ip: string): Promise<{ status: number; body: unknown }> {
-    limit(relayIp, `ip:${ip}`, 'signup');
+    // The name check costs an RPC call, so it has a budget of its own (not the /relay one).
+    limit(lookupIp, `ip:${ip}`, 'lookup');
     const body = await readJson(req);
     const problem = playerNameProblem(body.name);
     if (problem !== null) throw new HttpError(400, 'bad_name', problem);
@@ -114,11 +148,18 @@ export function createApp(opts: AppOptions): Server {
 
     limit(signupIp, `ip:${ip}`, 'signup');
     limit(signupGlobal, 'global', 'signup');
+    if ((await studioBalance()) < signupReserve) {
+      throw new HttpError(503, 'studio_funds_low', 'the studio account is low on testnet NEAR; new players cannot be created right now');
+    }
     try {
       const { txHash } = await chain.createPlayer(accountId, keyText);
       return { status: 200, body: { accountId, created: true, txHash } };
     } catch (e) {
       if (e instanceof ChainError && e.code === 'account_exists') {
+        // Our own earlier attempt may have created it (e.g. a retry right after a timeout).
+        if ((await chain.accountStatus(accountId, keyText)) === 'has_key') {
+          return { status: 200, body: { accountId, created: false } };
+        }
         throw new HttpError(409, 'name_taken', 'this name is already taken');
       }
       throw e;
@@ -130,6 +171,7 @@ export function createApp(opts: AppOptions): Server {
     const body = await readJson(req);
     const valid = validateSignedDelegate(body.signedDelegate, policy);
     limit(relaySender, valid.senderId, 'relay');
+    checkDelegateWindow(valid.maxBlockHeight, await blockHeight());
     const result = await chain.relay(valid.signedDelegate, policy.worldContractId);
     if (!result.ok) {
       return {
@@ -143,9 +185,10 @@ export function createApp(opts: AppOptions): Server {
     return { status: 200, body: payload, sender: valid.senderId };
   }
 
-  async function health(): Promise<{ status: number; body: unknown }> {
+  async function health(ip: string): Promise<{ status: number; body: unknown }> {
+    limit(lookupIp, `ip:${ip}`, 'lookup');
     try {
-      const h = await chain.health();
+      const h = await healthState();
       return {
         status: 200,
         body: { ok: true, parent: policy.parentId, world: policy.worldContractId, ...h },
@@ -160,6 +203,13 @@ export function createApp(opts: AppOptions): Server {
     const url = (req.url ?? '/').split('?')[0];
     const method = req.method ?? 'GET';
     const ip = clientIp(req, policy.trustProxyHops);
+    if (!proxyWarningLogged && policy.trustProxyHops <= 0 && req.headers['x-forwarded-for'] !== undefined) {
+      proxyWarningLogged = true;
+      log({
+        ev: 'warning',
+        message: 'X-Forwarded-For is present but TRUST_PROXY_HOPS=0: every client behind the proxy shares one rate-limit key. Set TRUST_PROXY_HOPS to the number of proxies in front of the relayer.',
+      });
+    }
     const done = (status: number, extra: Record<string, unknown> = {}): void => {
       log({ ev: 'request', method, path: url, status, ip, ms: now() - started, ...extra });
     };
@@ -177,7 +227,7 @@ export function createApp(opts: AppOptions): Server {
           return done(204);
         }
         if (method === 'GET' && url === '/health') {
-          const r = await health();
+          const r = await health(ip);
           send(res, r.status, r.body);
           return done(r.status);
         }
@@ -198,6 +248,7 @@ export function createApp(opts: AppOptions): Server {
         let code = 'internal_error';
         let message = 'internal error';
         const headers: Record<string, string> = {};
+        let txHash: string | undefined;
         if (e instanceof Rejection) {
           ({ status, code } = e);
           message = e.message;
@@ -206,11 +257,14 @@ export function createApp(opts: AppOptions): Server {
           message = e.message;
           if (e.retryAfterS !== undefined) headers['retry-after'] = String(e.retryAfterS);
         } else if (e instanceof ChainError) {
-          status = 502;
+          // 504: sent, outcome unknown (look txHash up before retrying). 502: nothing executed.
+          status = e.code === 'relay_unknown' ? 504 : 502;
           code = e.code;
           message = e.message.slice(0, 300);
+          txHash = e.txHash;
         }
-        if (!res.headersSent) send(res, status, { error: { code, message } }, headers);
+        const body = txHash === undefined ? { error: { code, message } } : { error: { code, message }, txHash };
+        if (!res.headersSent) send(res, status, body, headers);
         done(status, { code });
       }
     })();

@@ -22,6 +22,13 @@ export const ALLOWED_METHODS: ReadonlySet<string> = new Set(['start_dive', 'sett
 /** A signed delegate is a few hundred bytes plus the call arguments (settle_dive: up to 4000 moves). */
 export const MAX_DELEGATE_BYTES = 16 * 1024;
 export const MAX_ARGS_BYTES = 8 * 1024;
+/**
+ * Lifetime window for a delegate's maxBlockHeight, in blocks past the current height. The web signs
+ * with a 100-block TTL (web/src/tx.ts). At least MIN left so it can still land; at most MAX so a
+ * signed delegate cannot be kept and replayed much later (the RPC the player used may lag ours).
+ */
+export const DELEGATE_MIN_BLOCKS_LEFT = 5n;
+export const DELEGATE_MAX_TTL_BLOCKS = 300n;
 
 /** `^[a-z0-9][a-z0-9-]{1,22}[a-z0-9]$` from the spec, plus NEAR's rule that "-" never doubles. */
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,22}[a-z0-9]$/;
@@ -93,6 +100,25 @@ export interface ValidDelegate {
   senderId: string;
   method: string;
   gas: bigint;
+  maxBlockHeight: bigint;
+}
+
+/**
+ * Throws a 403 Rejection unless the delegate can still execute and does not live too long.
+ * `height` is the chain's current block height; NEAR rejects a delegate once the block height
+ * passes its maxBlockHeight, after the relayer has already paid for the outer transaction.
+ */
+export function checkDelegateWindow(maxBlockHeight: bigint, height: bigint): void {
+  if (maxBlockHeight < height + DELEGATE_MIN_BLOCKS_LEFT) {
+    throw new Rejection(403, 'delegate_expired', `delegate expires at block ${maxBlockHeight}; the chain is at ${height}. Sign it again.`);
+  }
+  if (maxBlockHeight > height + DELEGATE_MAX_TTL_BLOCKS) {
+    throw new Rejection(
+      403,
+      'delegate_ttl_too_long',
+      `delegate maxBlockHeight must be at most ${DELEGATE_MAX_TTL_BLOCKS} blocks past the current height (${height})`,
+    );
+  }
 }
 
 const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
@@ -187,5 +213,5 @@ export function validateSignedDelegate(base64: unknown, policy: PolicyConfig): V
   }
   if (!signatureOk) throw new Rejection(403, 'bad_signature', 'delegate signature does not verify');
 
-  return { signedDelegate, senderId: da.senderId, method: call.methodName, gas: call.gas };
+  return { signedDelegate, senderId: da.senderId, method: call.methodName, gas: call.gas, maxBlockHeight: da.maxBlockHeight };
 }
