@@ -49,8 +49,13 @@ export function resultScreen(input: ResultInput, onBack: () => void): HTMLElemen
   const source = input.chain ? 'recorded by the contract' : 'from your local run (the contract returned no details)';
   const differs = input.chain !== null && digest(input.chain) !== digest(input.finish.local);
 
-  const link = (label: string, tx: string) => h('li', {}, `${label}: `, h('a', { href: explorerTxUrl(tx), target: '_blank', rel: 'noopener' }, 'view transaction'), ' ', h('span', { class: 'mono muted' }, tx.slice(0, 10) + '...'));
-  const via = (c: { via: 'relayer' | 'direct' }) => (c.via === 'relayer' ? 'sent through the studio relayer, you paid nothing' : 'sent directly with your own key (the relayer was not available)');
+  const link = (label: string, tx: string) => tx
+    ? h('li', {}, `${label}: `, h('a', { href: explorerTxUrl(tx), target: '_blank', rel: 'noopener' }, 'view transaction'), ' ', h('span', { class: 'mono muted' }, tx.slice(0, 10) + '...'))
+    : h('li', {}, `${label}: on the chain (transaction id unknown)`);
+  const via = (c: { via: 'relayer' | 'direct' | 'state' }) =>
+    c.via === 'relayer' ? 'sent through the studio relayer, you paid nothing'
+      : c.via === 'direct' ? 'sent directly with your own key (the relayer was not available)'
+        : 'confirmed by reading the contract (the reply to the first attempt was lost)';
 
   return h('div', {},
     h('div', { class: `banner ${shown.died ? 'warn' : 'good'}`, role: 'status' }, shown.died ? 'Dive recorded. You died, and your grave is now part of the world.' : 'Dive recorded. You made it back.'),

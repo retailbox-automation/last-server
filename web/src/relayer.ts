@@ -4,10 +4,16 @@
 
 import { config } from './config.ts';
 
+/**
+ * The relayer could not serve the call. It may still have sent it (a timeout, or `504 relay_unknown`
+ * with `txHash`), so the caller must read the chain before sending the same call another way.
+ */
 export class RelayerUnavailable extends Error {
-  constructor(message: string) {
+  readonly txHash: string | undefined;
+  constructor(message: string, txHash?: string) {
     super(message);
     this.name = 'RelayerUnavailable';
+    this.txHash = txHash;
   }
 }
 
@@ -56,7 +62,7 @@ function toError(status: number, json: any): Error {
   const code: string = json?.error?.code ?? 'unknown';
   const message: string = json?.error?.message ?? `relayer answered ${status}`;
   // 5xx and 429 mean "this relayer cannot serve you now"; anything else is a decision about the request.
-  if (status >= 500 || status === 429) return new RelayerUnavailable(`${status} ${code}: ${message}`);
+  if (status >= 500 || status === 429) return new RelayerUnavailable(`${status} ${code}: ${message}`, json?.txHash);
   return new RelayerRefused(status, code, message, json?.txHash);
 }
 

@@ -7,7 +7,7 @@ import type { DiveTicket } from './world.ts';
 
 export interface StartInfo {
   txHash: string;
-  via: 'relayer' | 'direct';
+  via: 'relayer' | 'direct' | 'state';
 }
 
 /** What a dive needs to be replayed: its ticket, the state it started from, and how it was started. */

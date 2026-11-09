@@ -13,11 +13,11 @@ npm run wasm      # builds crates/ls-wasm and writes web/src/wasm/ (not committe
 npm run dev       # http://localhost:5173
 ```
 
-`npm run build` runs the wasm step, the type check and `vite build`; the site is `web/dist`. `npm test` runs the unit tests (relayer client, config, name rules).
+`npm run build` runs the wasm step, the type check and `vite build`; the site is `web/dist`. `npm test` runs the unit tests (relayer client, call retry policy, config, name rules, wasm parity).
 
 ### Without a deployed contract
 
-`relayer/dev/mock-world.mjs` is a local stand-in for testnet, the world contract and the studio account (it runs the real relayer code on a fake chain and the same wasm rules):
+`relayer/dev/mock-world.mjs` is a local stand-in for testnet, the world contract and the studio account (it runs the real relayer, `NearChain` included, against a fake RPC that answers in testnet's shapes, and the same wasm rules):
 
 ```
 cd relayer && npm ci && node dev/mock-world.mjs      # RPC :3030, relayer :8787
@@ -38,10 +38,10 @@ It cannot catch a contract bug; it exercises the UI, sign-up, the signed-delegat
 ## How a call is sent
 
 1. The page builds a NEP-366 `SignedDelegate` with the player's key (100 Tgas, deposit 0, expires in about 2 minutes) and POSTs it to the relayer, which pays the gas.
-2. If the relayer is unreachable, answers 5xx or 429, the page sends the same call directly from the player's account with 100 Tgas (new accounts get 0.2 testnet NEAR at sign-up).
-3. If the relayer or the contract refuses the call (policy 4xx, contract panic), the page shows the reason and does not retry.
+2. If the relayer is unreachable, times out, answers 5xx or 429, the relayer may still have sent the call (`504 relay_unknown` says so outright). The page first reads `active_dive`: if the call already took effect (`start_dive`: a dive is open; `settle_dive`: this dive is closed) it carries on; only otherwise does it send the same call directly from the player's account with 100 Tgas (new accounts get 0.2 testnet NEAR at sign-up).
+3. If the relayer refuses the call (policy 4xx) the page shows the reason and does not retry. If the contract refuses it, the page reads `active_dive` the same way first: a refusal caused by an earlier attempt that went through (`no active dive` after a lost reply) counts as done.
 
-A dive in progress is saved in `localStorage` (move log plus the state it started from), so closing the tab does not turn it into a death; `Continue the dive` replays it.
+A dive in progress is saved in `localStorage` (move log plus the state it started from), so closing the tab does not turn it into a death; `Continue the dive` replays it. `End the dive here` on the surface records the open dive right away with the moves this browser has; with none (another browser, cleared storage) it settles an empty log and the player comes back with the loadout.
 
 ## Notes
 

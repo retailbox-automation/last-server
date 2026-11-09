@@ -5,7 +5,7 @@ import { toBase64 } from './bytes.ts';
 import { view } from './chain.ts';
 import type { Session } from './keys.ts';
 import { callWorld } from './tx.ts';
-import type { CallResult } from './tx.ts';
+import type { AlreadyDone, CallResult } from './tx.ts';
 import type { DiveEntry, DiveOutcome } from './sim.ts';
 
 export interface DiveTicket {
@@ -58,12 +58,36 @@ export async function allGraves(): Promise<GraveView[]> {
   return perDepth.flat();
 }
 
+/**
+ * start_dive already happened if the account now has an active dive. Only valid because a dive is
+ * started from the surface, which offers it only when the contract showed no active dive.
+ */
+export function startedAlready(accountId: string): AlreadyDone {
+  return async (txHash) => {
+    const t = await activeDive(accountId);
+    return t ? { txHash: txHash ?? '', via: 'state', result: t } : null;
+  };
+}
+
+/** settle_dive already happened if this dive is no longer the account's active one. */
+export function settledAlready(accountId: string, diveId: string): AlreadyDone {
+  return async (txHash) => {
+    const t = await activeDive(accountId);
+    return t === null || String(t.dive_id) !== String(diveId) ? { txHash: txHash ?? '', via: 'state', result: null } : null;
+  };
+}
+
 /** loadout: token id -> amount. */
 export async function startDive(
   session: Session,
   loadout: Array<[token: string, amount: number]>,
 ): Promise<{ ticket: DiveTicket; call: CallResult }> {
-  const call = await callWorld(session, 'start_dive', { loadout: loadout.map(([t, n]) => [t, String(n)]) });
+  const call = await callWorld(
+    session,
+    'start_dive',
+    { loadout: loadout.map(([t, n]) => [t, String(n)]) },
+    startedAlready(session.accountId),
+  );
   const ticket = call.result as DiveTicket | null;
   if (!ticket || ticket.dive_id === undefined) {
     // The relayer or RPC returned no value; read the ticket back from the chain.
@@ -79,6 +103,6 @@ export async function settleDive(
   diveId: string,
   moves: Uint8Array,
 ): Promise<{ outcome: DiveOutcome | null; call: CallResult }> {
-  const call = await callWorld(session, 'settle_dive', { dive_id: diveId, moves: toBase64(moves) });
+  const call = await callWorld(session, 'settle_dive', { dive_id: diveId, moves: toBase64(moves) }, settledAlready(session.accountId, diveId));
   return { outcome: (call.result as DiveOutcome | null) ?? null, call };
 }
