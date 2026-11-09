@@ -5,7 +5,8 @@
 //! moves)` re-runs `ls_core` on that seed and the move log, then applies the outcome: finds are
 //! minted, looted graves move to the player, used-up and broken items burn, and on death what the
 //! player carried becomes a grave at that depth for anyone to loot. A dive left open past its day
-//! can be expired by anyone: its loadout becomes a grave at the start depth.
+//! can be expired by anyone once `rules::EXPIRE_GRACE_SECONDS` have passed since its start: its
+//! loadout becomes a grave at the start depth.
 //!
 //! Graves are stored per depth (`LookupMap<depth, Vec<GraveRecord>>`, at most
 //! `rules::GRAVES_PER_DEPTH` each, the oldest crumbles), and `settle_dive` reads only the depths
@@ -15,9 +16,10 @@
 //! `mt_balance_of`, `mt_batch_balance_of`, `mt_supply`, `mt_batch_supply`, `mt_token` and the
 //! `mt_mint` / `mt_transfer` / `mt_burn` events. Not implemented: `mt_transfer_call` /
 //! `mt_resolve_transfer`, approvals, metadata, NEP-145 storage deposits. Locked (carried) items
-//! cannot be transferred until the dive is settled or expired.
+//! cannot be transferred until the dive is settled or expired. Without storage deposits the
+//! contract pays for every balance entry, so items go only to accounts that have started a dive.
 
-use ls_core::rules::GRAVES_PER_DEPTH;
+use ls_core::rules::{EXPIRE_GRACE_SECONDS, GRAVES_PER_DEPTH};
 use ls_core::{DiveEntry, DiveOutcome, Grave, GraveSource, ItemId, MAX_MOVES, START_DEPTH};
 use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::serde::Serialize;
@@ -62,6 +64,8 @@ pub struct GraveRecord {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActiveDive {
     pub dive_id: u64,
+    /// Block timestamp (ns) of `start_dive`.
+    pub started_at: u64,
     pub day: u32,
     pub seed: u64,
     pub start_depth: u32,
@@ -231,6 +235,7 @@ impl Contract {
         let day = self.current_day();
         let dive = ActiveDive {
             dive_id: self.next_dive_id,
+            started_at: env::block_timestamp(),
             day,
             seed: self.seed_of(day),
             start_depth: START_DEPTH,
@@ -337,6 +342,8 @@ impl Contract {
             self.day_mut(dive.day).deaths += 1;
         }
 
+        // Every log above and below is in `tests::worst_settle_logs`, which checks NEAR's limits on
+        // the logs of one call; a new log here goes there too.
         let stats = self.player_mut(&player);
         stats.deepest = stats.deepest.max(outcome.final_depth);
         self.day_mut(dive.day).moves += u64::from(outcome.moves_applied);
@@ -360,12 +367,15 @@ impl Contract {
         outcome
     }
 
-    /// Anyone may end a dive left open past its day: it counts as a death, and the loadout
-    /// becomes a grave at the start depth (position from the seed). No death toll.
+    /// Anyone may end a dive left open past its day, once `EXPIRE_GRACE_SECONDS` have passed
+    /// since it started: it counts as a death, and the loadout becomes a grave at the start depth
+    /// (position from the seed). No death toll.
     pub fn expire_dive(&mut self, account_id: AccountId) {
         let dive = self.active.get(&account_id).cloned().unwrap_or_else(|| env::panic_str("no active dive for this account"));
+        if let Some(why) = expire_refusal(&dive, env::block_timestamp()) {
+            env::panic_str(&why);
+        }
         let today = self.current_day();
-        require!(dive.day < today, "the dive's day is not over yet");
         self.active.remove(&account_id);
         self.unlock(&account_id, &dive.loadout);
         let mut grave_id = None;
@@ -399,7 +409,7 @@ impl Contract {
     // ---------------------------------------------------------------------------------------
 
     pub fn current_day(&self) -> u32 {
-        u32::try_from(env::block_timestamp() / NS_PER_SECOND / DAY_SECONDS).unwrap_or(u32::MAX)
+        day_of(env::block_timestamp())
     }
 
     /// The seed of every dive started on `day`: u64 (little-endian) of sha256(day LE ‖ salt).
@@ -639,6 +649,9 @@ impl Contract {
     fn checked_transfer(&mut self, sender: &AccountId, receiver: &AccountId, items: Vec<(String, u128)>, memo: Option<&str>) {
         require!(sender != receiver, "sender and receiver must differ");
         require!(receiver != &env::current_account_id(), "the world contract does not take transfers");
+        // The contract pays the storage of every balance entry: items go only to accounts that have
+        // started a dive (at most one entry per item kind each), never to made-up account ids.
+        require!(self.players.contains_key(receiver), "the receiver has never started a dive: items go only to players");
         require!(!items.is_empty(), "nothing to transfer");
         for (token, amount) in &items {
             require!(self.known(token), "unknown token_id");
@@ -729,6 +742,24 @@ fn grave_view(g: &GraveRecord) -> GraveView {
     }
 }
 
+/// The game day of a block timestamp (ns).
+fn day_of(timestamp_ns: u64) -> u32 {
+    u32::try_from(timestamp_ns / NS_PER_SECOND / DAY_SECONDS).unwrap_or(u32::MAX)
+}
+
+/// Why `dive` cannot be expired at block time `now` (ns), or `None` when anyone may expire it:
+/// its day is over and `EXPIRE_GRACE_SECONDS` have passed since it started (so a dive started just
+/// before midnight is not expired while its owner is still playing).
+fn expire_refusal(dive: &ActiveDive, now: u64) -> Option<String> {
+    if dive.day >= day_of(now) {
+        return Some("the dive's day is not over yet".to_string());
+    }
+    if now.saturating_sub(dive.started_at) / NS_PER_SECOND < EXPIRE_GRACE_SECONDS {
+        return Some(format!("the dive started less than {EXPIRE_GRACE_SECONDS} seconds ago"));
+    }
+    None
+}
+
 fn ticket_of(d: &ActiveDive) -> DiveTicket {
     DiveTicket { dive_id: U64(d.dive_id), day: d.day, seed: U64(d.seed), start_depth: d.start_depth }
 }
@@ -746,14 +777,19 @@ struct Event<'a, T: Serialize> {
     data: &'a [T],
 }
 
-fn emit_event<T: Serialize>(standard: &'static str, event: &'static str, data: &[T]) {
+/// One NEP-297 log line.
+fn event_line<T: Serialize>(standard: &'static str, event: &'static str, data: &[T]) -> String {
     let e = Event { standard, version: "1.0.0", event, data };
     let json = near_sdk::serde_json::to_string(&e).unwrap_or_else(|_| env::panic_str("event serializes"));
-    env::log_str(&format!("EVENT_JSON:{json}"));
+    format!("EVENT_JSON:{json}")
+}
+
+fn game_line<T: Serialize>(event: &'static str, row: &T) -> String {
+    event_line("lastserver", event, core::slice::from_ref(row))
 }
 
 fn emit_game<T: Serialize>(event: &'static str, row: &T) {
-    emit_event("lastserver", event, core::slice::from_ref(row));
+    env::log_str(&game_line(event, row));
 }
 
 #[derive(Serialize)]
@@ -811,8 +847,9 @@ impl GraveLog {
     }
 }
 
-/// One looted grave in `grave_looted`. Kept small on purpose: a long dive can loot over a hundred
-/// graves and all logs of a call share a 16 KB limit (items are in the grave's `grave_created`).
+/// One looted grave in `grave_looted`. Kept small on purpose: a dive loots up to
+/// `rules::GRAVES_LOOTED_PER_DIVE` graves and all logs of a call share a 16 KB limit (items are in
+/// the grave's `grave_created`).
 #[derive(Serialize)]
 #[serde(crate = "near_sdk::serde")]
 struct LootedRow {
@@ -868,21 +905,150 @@ fn split(items: &[(String, u128)]) -> (Vec<&str>, Vec<U128>) {
     items.iter().map(|(t, n)| (t.as_str(), U128(*n))).unzip()
 }
 
-fn emit_mint(owner: &AccountId, items: &[(String, u128)], memo: Option<&str>) {
+fn mint_line(owner: &AccountId, items: &[(String, u128)], memo: Option<&str>) -> String {
     let (token_ids, amounts) = split(items);
-    emit_event("nep245", "mt_mint", &[MtMintLog { owner_id: owner, token_ids, amounts, memo }]);
+    event_line("nep245", "mt_mint", &[MtMintLog { owner_id: owner, token_ids, amounts, memo }])
 }
 
-fn emit_burn(owner: &AccountId, items: &[(String, u128)], memo: Option<&str>) {
+fn burn_line(owner: &AccountId, items: &[(String, u128)], memo: Option<&str>) -> String {
     let (token_ids, amounts) = split(items);
-    emit_event("nep245", "mt_burn", &[MtBurnLog { owner_id: owner, authorized_id: None, token_ids, amounts, memo }]);
+    event_line("nep245", "mt_burn", &[MtBurnLog { owner_id: owner, authorized_id: None, token_ids, amounts, memo }])
 }
 
-fn emit_transfer(from: &AccountId, to: &AccountId, items: &[(String, u128)], memo: Option<&str>) {
+fn transfer_line(from: &AccountId, to: &AccountId, items: &[(String, u128)], memo: Option<&str>) -> String {
     let (token_ids, amounts) = split(items);
-    emit_event(
+    event_line(
         "nep245",
         "mt_transfer",
         &[MtTransferLog { authorized_id: None, old_owner_id: from, new_owner_id: to, token_ids, amounts, memo }],
-    );
+    )
+}
+
+fn emit_mint(owner: &AccountId, items: &[(String, u128)], memo: Option<&str>) {
+    env::log_str(&mint_line(owner, items, memo));
+}
+
+fn emit_burn(owner: &AccountId, items: &[(String, u128)], memo: Option<&str>) {
+    env::log_str(&burn_line(owner, items, memo));
+}
+
+fn emit_transfer(from: &AccountId, to: &AccountId, items: &[(String, u128)], memo: Option<&str>) {
+    env::log_str(&transfer_line(from, to, items, memo));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ls_core::rules::GRAVES_LOOTED_PER_DIVE;
+
+    /// NEAR's limits on the logs of one function call (`limit_config.max_number_logs` and
+    /// `max_total_log_length`, testnet protocol 88, read 2026-11-07).
+    const MAX_NUMBER_LOGS: usize = 100;
+    const MAX_TOTAL_LOG_LENGTH: usize = 16_384;
+
+    /// Every log line one `settle_dive` can write, each at its longest, for a dive that loots
+    /// `looted` graves and dies: finds minted, loot moved, looted graves listed, used-up items and
+    /// the death toll burned, the rest moved into a new grave that makes the oldest grave at its
+    /// depth crumble. Account ids have 64 characters (the protocol maximum), every number is its
+    /// type's maximum and every item list holds all six item kinds.
+    fn worst_settle_logs(looted: usize) -> Vec<String> {
+        let id = |c: char| -> AccountId { c.to_string().repeat(64).parse().expect("valid account id") };
+        let (player, world, owner) = (id('p'), id('w'), id('o'));
+        let max_items: Vec<(ItemId, u32)> = ls_core::ITEM_IDS.iter().map(|&i| (i, u32::MAX)).collect();
+        let items = named_u128(&max_items);
+        let loot: Vec<(String, u128)> = items.iter().map(|(t, n)| (t.clone(), n * looted as u128)).collect();
+        let grave = GraveRecord {
+            id: u32::MAX,
+            owner_id: owner.clone(),
+            depth: u32::MAX,
+            x: u8::MAX,
+            y: u8::MAX,
+            items: max_items.clone(),
+            day: u32::MAX,
+            dive_id: u64::MAX,
+        };
+        let rows = (0..looted).map(|_| LootedRow { grave_id: u32::MAX, owner_id: owner.clone(), depth: u32::MAX }).collect();
+        vec![
+            mint_line(&player, &items, Some("dive finds")),
+            transfer_line(&world, &player, &loot, Some("grave loot")),
+            game_line("grave_looted", &GraveLootedLog { looter_id: &player, dive_id: U64(u64::MAX), graves: rows }),
+            burn_line(&player, &items, Some("used up, broken, death toll")),
+            transfer_line(&player, &world, &items, Some("grave")),
+            burn_line(&world, &items, Some("grave crumbled")),
+            game_line("grave_crumbled", &GraveLog::of(&grave)),
+            game_line("grave_created", &GraveLog::of(&grave)),
+            game_line(
+                "dive_settled",
+                &DiveSettledLog {
+                    account_id: &player,
+                    dive_id: U64(u64::MAX),
+                    day: u32::MAX,
+                    died: true,
+                    final_depth: u32::MAX,
+                    moves_applied: u32::MAX,
+                    kills: u32::MAX,
+                    picked: named(&max_items),
+                    burned: named(&max_items),
+                    looted_graves: vec![u32::MAX; looted],
+                    grave_id: Some(u32::MAX),
+                    vault_opened: false,
+                },
+            ),
+        ]
+    }
+
+    fn total(lines: &[String]) -> usize {
+        lines.iter().map(String::len).sum()
+    }
+
+    #[test]
+    fn worst_case_settle_logs_fit_near_limits() {
+        let cap = GRAVES_LOOTED_PER_DIVE as usize;
+        let lines = worst_settle_logs(cap);
+        for line in &lines {
+            let json = line.strip_prefix("EVENT_JSON:").expect("NEP-297 prefix");
+            near_sdk::serde_json::from_str::<near_sdk::serde_json::Value>(json).expect("a log line is JSON");
+        }
+        let fixed = total(&worst_settle_logs(0));
+        let per_grave = total(&worst_settle_logs(cap + 1)) - total(&lines);
+        println!(
+            "worst settle_dive logs at {cap} looted graves: {} lines, {} bytes of {MAX_TOTAL_LOG_LENGTH} (no graves: {fixed} bytes; {per_grave} bytes per grave; room for {} graves)",
+            lines.len(),
+            total(&lines),
+            (MAX_TOTAL_LOG_LENGTH - fixed) / per_grave
+        );
+        for line in &lines {
+            println!("  {} bytes  {}", line.len(), &line[..line.len().min(90)]);
+        }
+        assert!(lines.len() <= MAX_NUMBER_LOGS, "{} logs", lines.len());
+        assert!(total(&lines) <= MAX_TOTAL_LOG_LENGTH, "{} bytes", total(&lines));
+        // Control: the same model without the cap breaks the limit, as the review found for ~150.
+        let uncapped = total(&worst_settle_logs(150));
+        assert!(uncapped > MAX_TOTAL_LOG_LENGTH, "150 looted graves: {uncapped} bytes");
+    }
+
+    fn dive_started(day: u32, started_at: u64) -> ActiveDive {
+        ActiveDive { dive_id: 0, started_at, day, seed: 0, start_depth: 1, loadout: vec![] }
+    }
+
+    #[test]
+    fn a_dive_is_expirable_once_its_day_is_over_and_the_grace_has_passed() {
+        const S: u64 = NS_PER_SECOND;
+        let day = 20_401u32;
+        let midnight = u64::from(day + 1) * DAY_SECONDS * S;
+        let late = dive_started(day, midnight - 3600 * S); // 23:00
+        let early = dive_started(day, midnight - 14 * 3600 * S); // 10:00
+        assert_eq!((day_of(late.started_at), day_of(midnight)), (day, day + 1));
+        // The same day: nobody can expire either.
+        assert_eq!(expire_refusal(&late, midnight - S).as_deref(), Some("the dive's day is not over yet"));
+        assert_eq!(expire_refusal(&early, midnight - S).as_deref(), Some("the dive's day is not over yet"));
+        // One second into the next day the 10:00 dive can go; the 23:00 one cannot.
+        assert_eq!(expire_refusal(&early, midnight + S), None);
+        let refused = expire_refusal(&late, midnight + S).expect("a dive started at 23:00 is refused at 00:00:01");
+        assert!(refused.starts_with("the dive started less than"), "{refused}");
+        // ...until EXPIRE_GRACE_SECONDS after its start.
+        let ready = late.started_at + EXPIRE_GRACE_SECONDS * S;
+        assert!(expire_refusal(&late, ready - S).is_some());
+        assert_eq!(expire_refusal(&late, ready), None);
+    }
 }
