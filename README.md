@@ -20,11 +20,14 @@ Built at NEAR HACKATHON 2026 (track: Games With Real Economies). Work in progres
 | Loot is decided by the contract, not by the client | `settle_dive` replays the move log on the day's seed | `scripts/e2e_testnet.mjs` compares every contract result with the browser's wasm replay (37/37 on 2026-11-09) |
 | A dead player's items become a grave someone else can take | events `grave_created`, `grave_looted` | The loot transaction from the testnet run: [3qnAD5…](https://testnet.nearblocks.io/txns/3qnAD5gx85TYb95BBNrKA6y8WqUf2wViV5DWPJGxhpeD) |
 | Replaying a dive on chain is cheap | measured gas | [docs/spike/GAS-TESTNET.md](docs/spike/GAS-TESTNET.md), [docs/spike/GAS-RESULTS-V1.md](docs/spike/GAS-RESULTS-V1.md) |
+| The game keeps working with the studio backend off | the page sends the call from the player's own account | On 2026-11-10 we stopped the demo relayer and played a dive from a browser that already had a key: [start](https://testnet.nearblocks.io/txns/88B5T5kVuwJMAwgNAxe8gxt8KWiXNzWrKchMdut5qDRk) and [settle](https://testnet.nearblocks.io/txns/FQ7eQMi4i5LTRK6Hf1CG28rKbs6duyEc3gbg52DPg9Re) are signed by the player, not by the studio |
 | No wallet window for the player | the page makes a key per name | Play: you type a name, nothing asks you to sign or pay |
 
 ## Status
 
 Core v1 (2026-11-09): rules crate, world contract, relayer and web client are built and pass their tests against a local sandbox and a mock chain. Verified end-to-end on NEAR testnet: 37/37 checks pass (contract `world.lastserver.testnet`, 2026-11-09). The run, [scripts/e2e_testnet.mjs](scripts/e2e_testnet.mjs), signs up two players through the relayer and checks that the relayer refuses a wrong method, a wrong receiver, a deposit, gas over 100 Tgas and a long-lived delegate. The first player dies and leaves a grave; the second loots it and climbs out. Each contract result equals the web client's replay of the same move log. The loot transaction: [3qnAD5…](https://testnet.nearblocks.io/txns/3qnAD5gx85TYb95BBNrKA6y8WqUf2wViV5DWPJGxhpeD).
+
+Hosted demo (2026-11-10): the web client at https://lastserver.retailbox-automation.com and the relayer at https://lastserver-relay.retailbox-automation.com, both on NEAR testnet against `world.lastserver.testnet`. The relayer creates at most 15 new players a day (5 per IP per hour) and gives each 0.15 testnet NEAR, enough to keep playing when the relayer is off.
 
 ## Try it
 
@@ -42,6 +45,7 @@ Needs Rust with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` 0.2.130 
    You see JSON whose `rules_sha256` is the same hash.
 3. Build and test the relayer and the web client: `cd relayer && npm ci && npm test`, then `cd ../web && npm ci && npm run build && npm test`. Each test summary ends with `ℹ fail 0`; the build writes the site to `web/dist`.
 4. Play at https://lastserver.retailbox-automation.com: type a name and press Play. You see "Today is day N" and "Graves in the world", read straight from the contract. Choose what to carry and press Dive. Move with the arrow keys or WASD, walk into a monster to attack, take the green stairs down. To keep what you carry, go back to the blue arrow where you arrived on the current depth and press `U`. You see "Dive recorded." and, under "On the chain", links to the "Dive started" and "Dive settled" transactions on the testnet explorer. Die instead, and your items stay on that depth as a grave with your name on it for the next player.
+5. The studio can go away. A browser that already holds a player key keeps playing when the relayer does not answer: the page sends the same call from the player's own account, and the result screen says "sent directly with your own key (the relayer was not available)". New names wait for the relayer, because it creates the accounts.
 
 The full testnet run needs a funded testnet account to act as the studio: it creates the two players as its sub-accounts and pays their gas (a little testnet NEAR; the players are deleted at the end). We ran it with our studio account `lastserver.testnet`:
 
