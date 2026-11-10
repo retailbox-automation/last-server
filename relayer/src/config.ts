@@ -5,9 +5,6 @@ import { parseNearAmount } from 'near-api-js';
 export interface Limits {
   relaySenderMax: number;
   relaySenderWindowS: number;
-  /** Per signer over a long window, so one account cannot spend the global budget alone. */
-  relaySenderDailyMax: number;
-  relaySenderDailyWindowS: number;
   relayIpMax: number;
   relayIpWindowS: number;
   /** All relays together, whatever the sender or IP: caps what the studio pays for gas in a window. */
@@ -50,9 +47,6 @@ export const DEFAULT_RPC_URL = 'https://test.rpc.fastnear.com';
 export const DEFAULT_LIMITS: Limits = {
   relaySenderMax: 30,
   relaySenderWindowS: 60,
-  // A dive is two calls and the contract allows 3 dives a day per account: 60 leaves room for retries.
-  relaySenderDailyMax: 60,
-  relaySenderDailyWindowS: 86_400,
   relayIpMax: 120,
   relayIpWindowS: 60,
   // A relayed call burns well under 0.01 testnet NEAR of gas; 1000 a day bounds the studio's spend on relays.
@@ -109,8 +103,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const limits: Limits = {
     relaySenderMax: intFrom(env, 'RATE_RELAY_SENDER_MAX', d.relaySenderMax, problems),
     relaySenderWindowS: intFrom(env, 'RATE_RELAY_SENDER_WINDOW_S', d.relaySenderWindowS, problems, 1),
-    relaySenderDailyMax: intFrom(env, 'RATE_RELAY_SENDER_DAILY_MAX', d.relaySenderDailyMax, problems),
-    relaySenderDailyWindowS: intFrom(env, 'RATE_RELAY_SENDER_DAILY_WINDOW_S', d.relaySenderDailyWindowS, problems, 1),
     relayIpMax: intFrom(env, 'RATE_RELAY_IP_MAX', d.relayIpMax, problems),
     relayIpWindowS: intFrom(env, 'RATE_RELAY_IP_WINDOW_S', d.relayIpWindowS, problems, 1),
     relayGlobalMax: intFrom(env, 'RATE_RELAY_GLOBAL_MAX', d.relayGlobalMax, problems),

@@ -20,9 +20,4 @@ describe('config limits', () => {
     assert.throws(() => loadConfig({ ...base, RATE_RELAY_GLOBAL_MAX: '0x10' }), /RATE_RELAY_GLOBAL_MAX/);
     assert.equal(loadConfig({ ...base, RATE_RELAY_GLOBAL_MAX: '250' }).limits.relayGlobalMax, 250);
   });
-  it('has a per-signer daily relay budget by default', () => {
-    const c = loadConfig(base);
-    assert.equal(c.limits.relaySenderDailyMax, 60);
-    assert.equal(c.limits.relaySenderDailyWindowS, 86_400);
-  });
 });
