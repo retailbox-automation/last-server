@@ -75,6 +75,7 @@ export function createApp(opts: AppOptions): Server {
   const l = policy.limits;
   const relayIp = new RateLimiter(l.relayIpMax, l.relayIpWindowS, now);
   const relaySender = new RateLimiter(l.relaySenderMax, l.relaySenderWindowS, now);
+  const relayGlobal = new RateLimiter(l.relayGlobalMax, l.relayGlobalWindowS, now);
   const signupIp = new RateLimiter(l.signupIpMax, l.signupIpWindowS, now);
   const signupGlobal = new RateLimiter(l.signupGlobalMax, l.signupGlobalWindowS, now);
   const lookupIp = new RateLimiter(l.lookupIpMax, l.lookupIpWindowS, now);
@@ -172,6 +173,12 @@ export function createApp(opts: AppOptions): Server {
     const valid = validateSignedDelegate(body.signedDelegate, policy);
     limit(relaySender, valid.senderId, 'relay');
     checkDelegateWindow(valid.maxBlockHeight, await blockHeight());
+    // The studio pays the gas of every relayed call, failed ones included: stop at the balance floor,
+    // and cap all relays together. A 503 or 429 makes the web client send the call from the player's own account.
+    if ((await studioBalance()) < policy.minStudioBalanceYocto) {
+      throw new HttpError(503, 'studio_funds_low', 'the studio account is low on testnet NEAR; send the call from your own account');
+    }
+    limit(relayGlobal, 'global', 'relay');
     const result = await chain.relay(valid.signedDelegate, policy.worldContractId);
     if (!result.ok) {
       return {

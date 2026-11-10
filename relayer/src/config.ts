@@ -7,6 +7,9 @@ export interface Limits {
   relaySenderWindowS: number;
   relayIpMax: number;
   relayIpWindowS: number;
+  /** All relays together, whatever the sender or IP: caps what the studio pays for gas in a window. */
+  relayGlobalMax: number;
+  relayGlobalWindowS: number;
   signupIpMax: number;
   signupIpWindowS: number;
   signupGlobalMax: number;
@@ -46,6 +49,9 @@ export const DEFAULT_LIMITS: Limits = {
   relaySenderWindowS: 60,
   relayIpMax: 120,
   relayIpWindowS: 60,
+  // A relayed call burns well under 0.01 testnet NEAR of gas; 1000 a day bounds the studio's spend on relays.
+  relayGlobalMax: 1000,
+  relayGlobalWindowS: 86_400,
   signupIpMax: 5,
   signupIpWindowS: 3600,
   // 20 x 0.2 NEAR = 4 testnet NEAR a day; the balance floor below stops signup before the studio runs dry.
@@ -98,6 +104,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     relaySenderWindowS: intFrom(env, 'RATE_RELAY_SENDER_WINDOW_S', d.relaySenderWindowS, problems),
     relayIpMax: intFrom(env, 'RATE_RELAY_IP_MAX', d.relayIpMax, problems),
     relayIpWindowS: intFrom(env, 'RATE_RELAY_IP_WINDOW_S', d.relayIpWindowS, problems),
+    relayGlobalMax: intFrom(env, 'RATE_RELAY_GLOBAL_MAX', d.relayGlobalMax, problems),
+    relayGlobalWindowS: intFrom(env, 'RATE_RELAY_GLOBAL_WINDOW_S', d.relayGlobalWindowS, problems),
     signupIpMax: intFrom(env, 'RATE_SIGNUP_IP_MAX', d.signupIpMax, problems),
     signupIpWindowS: intFrom(env, 'RATE_SIGNUP_IP_WINDOW_S', d.signupIpWindowS, problems),
     signupGlobalMax: intFrom(env, 'RATE_SIGNUP_GLOBAL_MAX', d.signupGlobalMax, problems),

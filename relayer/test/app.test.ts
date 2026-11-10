@@ -306,6 +306,35 @@ describe('POST /relay: delegate lifetime (maxBlockHeight)', () => {
 });
 
 describe('POST /relay', () => {
+  it('503 studio_funds_low below the balance floor, without calling the chain', async () => {
+    const chain = new FakeChain();
+    chain.balance = NEAR - 1n;
+    const { post } = await start({ chain });
+    const r = await post('/relay', { signedDelegate: await delegateBase64() });
+    assert.equal(r.status, 503);
+    assert.equal(r.body.error.code, 'studio_funds_low');
+    assert.equal(chain.relayed.length, 0);
+  });
+
+  it('relays at exactly the balance floor', async () => {
+    const chain = new FakeChain();
+    chain.balance = NEAR;
+    const { post } = await start({ chain });
+    assert.equal((await post('/relay', { signedDelegate: await delegateBase64() })).status, 200);
+  });
+
+  it('429 for all relays together once the global budget is spent, whatever the IP; resets after the window', async () => {
+    const { post, clock, chain } = await start({ limits: { relayGlobalMax: 2 }, trustProxyHops: 1 });
+    assert.equal((await post('/relay', { signedDelegate: await delegateBase64() }, { 'x-forwarded-for': '1.1.1.1' })).status, 200);
+    assert.equal((await post('/relay', { signedDelegate: await delegateBase64() }, { 'x-forwarded-for': '2.2.2.2' })).status, 200);
+    const r = await post('/relay', { signedDelegate: await delegateBase64() }, { 'x-forwarded-for': '3.3.3.3' });
+    assert.equal(r.status, 429);
+    assert.equal(r.body.error.code, 'rate_limited');
+    assert.equal(chain.relayed.length, 2);
+    clock.advance(DEFAULT_LIMITS.relayGlobalWindowS * 1000 + 1);
+    assert.equal((await post('/relay', { signedDelegate: await delegateBase64() }, { 'x-forwarded-for': '3.3.3.3' })).status, 200);
+  });
+
   it('forwards a valid start_dive and returns the tx hash and the call result', async () => {
     const { post, chain } = await start();
     const r = await post('/relay', { signedDelegate: await delegateBase64({ sender: `tom.${PARENT}` }) });
