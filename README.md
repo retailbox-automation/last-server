@@ -9,11 +9,49 @@ Built at NEAR HACKATHON 2026 (track: Games With Real Economies). Work in progres
 - One dive takes a few minutes. If your character dies, everything it carried stays at that depth as a grave with your name on it. The next player who reaches that depth can take it.
 - Items are NEP-245 multi-tokens. Graves and dive results are contract state.
 - The contract settles each dive by re-running the same deterministic game code (one Rust crate, compiled both into the browser and into the contract) on the day's seed and the player's move log. The client cannot invent loot.
-- The web client is a static page that reads the chain through public RPC. The studio backend is only a convenience: in the demo it is switched off and the game keeps working.
+- The web client is a static page that reads the chain through public RPC. The studio backend (a relayer) only creates new player accounts and pays gas. When it does not answer, a browser that already holds a player key sends the same call from the player's own account, so the game keeps working; only new names wait for the relayer.
+
+## Check it in five minutes
+
+| Claim | Where to see it | How to check |
+|---|---|---|
+| The game runs on NEAR testnet, not on our server | contract `world.lastserver.testnet` | Play at https://lastserver.retailbox-automation.com, then open the "Dive settled" link on the result screen |
+| The contract runs exactly the rules in this repo | `core_version().rules_sha256` | Step 2 of Try it: the hash of `crates/ls-core/src/rules.rs` equals the one the contract returns |
+| Loot is decided by the contract, not by the client | `settle_dive` replays the move log on the day's seed | `scripts/e2e_testnet.mjs` compares every contract result with the browser's wasm replay (37/37 on 2026-11-09) |
+| A dead player's items become a grave someone else can take | events `grave_created`, `grave_looted` | The loot transaction from the testnet run: [3qnAD5…](https://testnet.nearblocks.io/txns/3qnAD5gx85TYb95BBNrKA6y8WqUf2wViV5DWPJGxhpeD) |
+| Replaying a dive on chain is cheap | measured gas | [docs/spike/GAS-TESTNET.md](docs/spike/GAS-TESTNET.md), [docs/spike/GAS-RESULTS-V1.md](docs/spike/GAS-RESULTS-V1.md) |
+| No wallet window for the player | the page makes a key per name | Play: you type a name, nothing asks you to sign or pay |
 
 ## Status
 
 Core v1 (2026-11-09): rules crate, world contract, relayer and web client are built and pass their tests against a local sandbox and a mock chain. Verified end-to-end on NEAR testnet: 37/37 checks pass (contract `world.lastserver.testnet`, 2026-11-09). The run, [scripts/e2e_testnet.mjs](scripts/e2e_testnet.mjs), signs up two players through the relayer and checks that the relayer refuses a wrong method, a wrong receiver, a deposit, gas over 100 Tgas and a long-lived delegate. The first player dies and leaves a grave; the second loots it and climbs out. Each contract result equals the web client's replay of the same move log. The loot transaction: [3qnAD5…](https://testnet.nearblocks.io/txns/3qnAD5gx85TYb95BBNrKA6y8WqUf2wViV5DWPJGxhpeD).
+
+## Try it
+
+Needs Rust with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` 0.2.130 (`cargo install --locked wasm-bindgen-cli --version 0.2.130`) and Node 22.22.2 or newer.
+
+1. Run the rules tests: `cargo test -p ls-core --release`. You see `test result: ok` with `0 failed`.
+2. Check that the contract on testnet runs these rules. `shasum -a 256 crates/ls-core/src/rules.rs` prints `15e75b62a854bc2b87c310d975e3a3b1fd655afe25620e9908d83fe050bab457`. Then ask the contract:
+
+   ```sh
+   curl -s https://test.rpc.fastnear.com -H 'Content-Type: application/json' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"call_function","finality":"final","account_id":"world.lastserver.testnet","method_name":"core_version","args_base64":"e30="}}' \
+     | python3 -c 'import sys, json; print(bytes(json.load(sys.stdin)["result"]["result"]).decode())'
+   ```
+
+   You see JSON whose `rules_sha256` is the same hash.
+3. Build and test the relayer and the web client: `cd relayer && npm ci && npm test`, then `cd ../web && npm ci && npm run build && npm test`. Each test summary ends with `ℹ fail 0`; the build writes the site to `web/dist`.
+4. Play at https://lastserver.retailbox-automation.com: type a name and press Play. You see "Today is day N" and "Graves in the world", read straight from the contract. Choose what to carry and press Dive. Move with the arrow keys or WASD, walk into a monster to attack, take the green stairs down. To keep what you carry, go back to the blue arrow where you arrived on the current depth and press `U`. You see "Dive recorded." and, under "On the chain", links to the "Dive started" and "Dive settled" transactions on the testnet explorer. Die instead, and your items stay on that depth as a grave with your name on it for the next player.
+
+The full testnet run needs a funded testnet account to act as the studio: it creates the two players as its sub-accounts and pays their gas (a little testnet NEAR; the players are deleted at the end). We ran it with our studio account `lastserver.testnet`:
+
+```sh
+cd relayer && npm ci && cd ../web && npm ci && npm run build && cd ..
+LASTSERVER_ACCOUNT_ID=<studio>.testnet LASTSERVER_SECRET_KEY=ed25519:... \
+WORLD_CONTRACT_ID=world.lastserver.testnet RPC_URL=https://test.rpc.fastnear.com node scripts/e2e_testnet.mjs
+```
+
+It ends with `ALL CHECKS PASSED`.
 
 ## Platform findings (measured, day 1)
 
@@ -36,6 +74,12 @@ Core v1 (2026-11-09): rules crate, world contract, relayer and web client are bu
 
 - Storage for the player and balance records of new accounts is paid by the world contract (`start_dive` comes through the relayer with zero deposit). This is deliberate on testnet.
 - Gas: the worst measured 300-move dive with 100 graves on depths 1 to 10 costs 9.41 Tgas ([docs/spike/GAS-RESULTS-V1.md](docs/spike/GAS-RESULTS-V1.md)). Looting drives the cost (about 0.10 Tgas per looted grave, 0.02 Tgas per grave read, estimated from those rows), so a dive that loots close to the per-dive cap of 50 graves would cost about 11.5 Tgas (estimate, not measured). The client attaches 100 Tgas per call.
+
+## Libraries and tools
+
+Rust: near-sdk 5.30.1 (contract), wasm-bindgen 0.2.130 (browser build of the rules), serde and serde_json, sha2 (build script), near-workspaces 0.24.0 with tokio and base64 (sandbox tests and gas benchmark). JavaScript: near-api-js 7.4.0 and borsh 2.0.0 (relayer), near-api-js 7.4.0 and Vite 8.3.5 (web), TypeScript 7.0.2, Node's built-in test runner. All code in this repository was written during the hackathon window; no templates or own pre-hackathon libraries.
+
+Parts of the code and docs were written with AI coding assistants and reviewed and tested by the team.
 
 ## Network
 
