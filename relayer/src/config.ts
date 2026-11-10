@@ -5,6 +5,9 @@ import { parseNearAmount } from 'near-api-js';
 export interface Limits {
   relaySenderMax: number;
   relaySenderWindowS: number;
+  /** Per signer over a long window, so one account cannot spend the global budget alone. */
+  relaySenderDailyMax: number;
+  relaySenderDailyWindowS: number;
   relayIpMax: number;
   relayIpWindowS: number;
   /** All relays together, whatever the sender or IP: caps what the studio pays for gas in a window. */
@@ -47,6 +50,9 @@ export const DEFAULT_RPC_URL = 'https://test.rpc.fastnear.com';
 export const DEFAULT_LIMITS: Limits = {
   relaySenderMax: 30,
   relaySenderWindowS: 60,
+  // A dive is two calls and the contract allows 3 dives a day per account: 60 leaves room for retries.
+  relaySenderDailyMax: 60,
+  relaySenderDailyWindowS: 86_400,
   relayIpMax: 120,
   relayIpWindowS: 60,
   // A relayed call burns well under 0.01 testnet NEAR of gas; 1000 a day bounds the studio's spend on relays.
@@ -64,12 +70,13 @@ export const DEFAULT_LIMITS: Limits = {
 export const DEFAULT_SIGNUP_FUNDING_NEAR = '0.2';
 export const DEFAULT_MIN_STUDIO_BALANCE_NEAR = '1';
 
-function intFrom(env: NodeJS.ProcessEnv, name: string, fallback: number, problems: string[]): number {
+function intFrom(env: NodeJS.ProcessEnv, name: string, fallback: number, problems: string[], min = 0): number {
   const raw = env[name];
   if (raw === undefined || raw === '') return fallback;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 0) {
-    problems.push(`${name} must be a non-negative integer`);
+  // Plain decimal digits only: Number() would also take "1e3" or "0x10".
+  const n = /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : NaN;
+  if (!Number.isSafeInteger(n) || n < min) {
+    problems.push(min > 0 ? `${name} must be an integer of at least ${min}` : `${name} must be a non-negative integer`);
     return fallback;
   }
   return n;
@@ -101,17 +108,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const d = DEFAULT_LIMITS;
   const limits: Limits = {
     relaySenderMax: intFrom(env, 'RATE_RELAY_SENDER_MAX', d.relaySenderMax, problems),
-    relaySenderWindowS: intFrom(env, 'RATE_RELAY_SENDER_WINDOW_S', d.relaySenderWindowS, problems),
+    relaySenderWindowS: intFrom(env, 'RATE_RELAY_SENDER_WINDOW_S', d.relaySenderWindowS, problems, 1),
+    relaySenderDailyMax: intFrom(env, 'RATE_RELAY_SENDER_DAILY_MAX', d.relaySenderDailyMax, problems),
+    relaySenderDailyWindowS: intFrom(env, 'RATE_RELAY_SENDER_DAILY_WINDOW_S', d.relaySenderDailyWindowS, problems, 1),
     relayIpMax: intFrom(env, 'RATE_RELAY_IP_MAX', d.relayIpMax, problems),
-    relayIpWindowS: intFrom(env, 'RATE_RELAY_IP_WINDOW_S', d.relayIpWindowS, problems),
+    relayIpWindowS: intFrom(env, 'RATE_RELAY_IP_WINDOW_S', d.relayIpWindowS, problems, 1),
     relayGlobalMax: intFrom(env, 'RATE_RELAY_GLOBAL_MAX', d.relayGlobalMax, problems),
-    relayGlobalWindowS: intFrom(env, 'RATE_RELAY_GLOBAL_WINDOW_S', d.relayGlobalWindowS, problems),
+    relayGlobalWindowS: intFrom(env, 'RATE_RELAY_GLOBAL_WINDOW_S', d.relayGlobalWindowS, problems, 1),
     signupIpMax: intFrom(env, 'RATE_SIGNUP_IP_MAX', d.signupIpMax, problems),
-    signupIpWindowS: intFrom(env, 'RATE_SIGNUP_IP_WINDOW_S', d.signupIpWindowS, problems),
+    signupIpWindowS: intFrom(env, 'RATE_SIGNUP_IP_WINDOW_S', d.signupIpWindowS, problems, 1),
     signupGlobalMax: intFrom(env, 'RATE_SIGNUP_GLOBAL_MAX', d.signupGlobalMax, problems),
-    signupGlobalWindowS: intFrom(env, 'RATE_SIGNUP_GLOBAL_WINDOW_S', d.signupGlobalWindowS, problems),
+    signupGlobalWindowS: intFrom(env, 'RATE_SIGNUP_GLOBAL_WINDOW_S', d.signupGlobalWindowS, problems, 1),
     lookupIpMax: intFrom(env, 'RATE_LOOKUP_IP_MAX', d.lookupIpMax, problems),
-    lookupIpWindowS: intFrom(env, 'RATE_LOOKUP_IP_WINDOW_S', d.lookupIpWindowS, problems),
+    lookupIpWindowS: intFrom(env, 'RATE_LOOKUP_IP_WINDOW_S', d.lookupIpWindowS, problems, 1),
   };
   const config: Config = {
     parentId,

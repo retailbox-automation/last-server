@@ -316,6 +316,15 @@ describe('POST /relay', () => {
     assert.equal(chain.relayed.length, 0);
   });
 
+  it('429 for one signer over its daily budget, whatever the IP', async () => {
+    const { post, chain } = await start({ limits: { relaySenderDailyMax: 2 }, trustProxyHops: 1 });
+    assert.equal((await post('/relay', { signedDelegate: await delegateBase64() }, { 'x-forwarded-for': '1.1.1.1' })).status, 200);
+    assert.equal((await post('/relay', { signedDelegate: await delegateBase64() }, { 'x-forwarded-for': '2.2.2.2' })).status, 200);
+    const r = await post('/relay', { signedDelegate: await delegateBase64() }, { 'x-forwarded-for': '3.3.3.3' });
+    assert.equal(r.status, 429);
+    assert.equal(chain.relayed.length, 2);
+  });
+
   it('relays at exactly the balance floor', async () => {
     const chain = new FakeChain();
     chain.balance = NEAR;

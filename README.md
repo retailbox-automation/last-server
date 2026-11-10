@@ -77,7 +77,7 @@ It ends with `ALL CHECKS PASSED`.
 ## Limits
 
 - Storage for the player and balance records of new accounts is paid by the world contract (`start_dive` comes through the relayer with zero deposit). This is deliberate on testnet; before mainnet the first `start_dive` of an account would take a one-time NEP-145 storage deposit.
-- The demo relayer pays the gas of relayed calls: it stops at a floor of the studio balance and relays at most 1000 calls a day in total; then the page sends the call from the player's own account.
+- The demo relayer pays the gas of relayed calls: it stops at a floor of the studio balance and relays at most 1000 calls per 24 hours in total and 60 per player account; then the page sends the call from the player's own account.
 - Gas: the worst measured 300-move dive with 100 graves on depths 1 to 10 costs 9.41 Tgas ([docs/spike/GAS-RESULTS-V1.md](docs/spike/GAS-RESULTS-V1.md)). Looting drives the cost (about 0.10 Tgas per looted grave, 0.02 Tgas per grave read, estimated from those rows), so a dive that loots close to the per-dive cap of 50 graves would cost about 11.5 Tgas (estimate, not measured). The client attaches 100 Tgas per call.
 
 ## Libraries and tools

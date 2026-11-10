@@ -75,6 +75,7 @@ export function createApp(opts: AppOptions): Server {
   const l = policy.limits;
   const relayIp = new RateLimiter(l.relayIpMax, l.relayIpWindowS, now);
   const relaySender = new RateLimiter(l.relaySenderMax, l.relaySenderWindowS, now);
+  const relaySenderDaily = new RateLimiter(l.relaySenderDailyMax, l.relaySenderDailyWindowS, now);
   const relayGlobal = new RateLimiter(l.relayGlobalMax, l.relayGlobalWindowS, now);
   const signupIp = new RateLimiter(l.signupIpMax, l.signupIpWindowS, now);
   const signupGlobal = new RateLimiter(l.signupGlobalMax, l.signupGlobalWindowS, now);
@@ -172,6 +173,7 @@ export function createApp(opts: AppOptions): Server {
     const body = await readJson(req);
     const valid = validateSignedDelegate(body.signedDelegate, policy);
     limit(relaySender, valid.senderId, 'relay');
+    limit(relaySenderDaily, valid.senderId, 'relay');
     checkDelegateWindow(valid.maxBlockHeight, await blockHeight());
     // The studio pays the gas of every relayed call, failed ones included: stop at the balance floor,
     // and cap all relays together. A 503 or 429 makes the web client send the call from the player's own account.
