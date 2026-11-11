@@ -79,6 +79,8 @@ It ends with `ALL CHECKS PASSED`.
 - Storage for the player and balance records of new accounts is paid by the world contract (`start_dive` comes through the relayer with zero deposit). This is deliberate on testnet; before mainnet the first `start_dive` of an account would take a one-time NEP-145 storage deposit.
 - The demo relayer pays the gas of relayed calls: it stops at a floor of the studio balance and relays at most 1000 calls per 24 hours in total. When that budget is spent (anyone can spend it with calls that fail), the page sends each call from the player's own account, which costs the player a little testnet NEAR; the game keeps working.
 - Gas: the worst measured 300-move dive with 100 graves on depths 1 to 10 costs 9.41 Tgas ([docs/spike/GAS-RESULTS-V1.md](docs/spike/GAS-RESULTS-V1.md)). Looting drives the cost (about 0.10 Tgas per looted grave, 0.02 Tgas per grave read, estimated from those rows), so a dive that loots close to the per-dive cap of 50 graves would cost about 11.5 Tgas (estimate, not measured). The client attaches 100 Tgas per call.
+- Finds can be farmed within a day. The day's seed is public and the same for every dive that day, and the contract does not limit how many dives an account starts. A good move log (your own, or one copied from the chain) can be settled again in a new dive and mints the same finds again, until the day changes. Planned fix, not in this version: a per-account daily dive limit, or a per-dive seed for finds.
+- No NPCs. The Games track suggests agent NPCs; this version has none. Every grave and every loot comes from a player's dive.
 
 ## Libraries and tools
 

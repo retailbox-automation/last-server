@@ -34,11 +34,11 @@ Every dive is a bet: what you carry down can make you strong enough to go deeper
 ## What we will not build (scope guard)
 - No trading UI, no prices, no token for money. Items have use, not a price.
 - No mainnet, no real money, no wallet popups.
-- NPC agents with wallets (track hint) are a stretch, not the core; only if the core is done by Tue 10.11.
+- NPC agents (track hint): not built in this version. The core loop came first; see README § Limits.
 
 ## Consequences for the contract (beyond the day-1 spike)
 - Two calls per dive, not one: `start_dive(loadout)` moves the chosen items from the stash to "carried" (so the risk is real), then `settle_dive(seed, moves)` banks them or turns them into a grave. A dive not settled by the end of its day can be expired by anyone (`expire_dive`) → grave. Without this, closing the tab would be a free exit.
-- The day's seed is public and shared (daily-run genre: comparable stories). Players can pre-plan a route on a known seed; acceptable for this game and stated in README. Revisit only if the bots show an exploit that breaks the economy.
+- The day's seed is public and shared (daily-run genre: comparable stories). Players can pre-plan a route on a known seed; acceptable for this game and stated in README. Revisit only if the bots show an exploit that breaks the economy. Known since 2026-11-10: with no daily dive limit, one good log can be settled again and again within a day (README § Limits); the fix is planned, not in this version.
 - Graves are keyed by depth and placed on the day's map by a seeded position, so they persist across daily maps.
 
 ## Open questions to settle by numbers (fast-forward bots)
