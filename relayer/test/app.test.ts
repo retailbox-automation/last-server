@@ -28,6 +28,14 @@ class FakeChain implements Chain {
     const k = this.accounts.get(accountId);
     return k === undefined ? 'absent' : k === publicKey ? 'has_key' : 'other_key';
   }
+  /** When true, a relayed delegate must be signed by the key registered in `accounts` for its sender. */
+  strictKeys = false;
+  keyChecks = 0;
+  async isAccessKey(accountId: string, publicKey: string): Promise<boolean> {
+    this.keyChecks++;
+    if (!this.strictKeys) return true;
+    return this.accounts.get(accountId) === publicKey;
+  }
   async createPlayer(accountId: string, publicKey: string): Promise<{ txHash: string }> {
     if (this.failNext) {
       if (this.failNext.code === 'account_exists') this.created.push('!exists');
@@ -360,6 +368,47 @@ describe('POST /relay', () => {
       assert.equal(r.status, 403, label);
       assert.equal(r.body.error.code, code, label);
     }
+    assert.equal(chain.relayed.length, 0);
+  });
+
+  it('403 bad_signer when the delegate is signed with a key the sender account does not have; spends no budget and no gas', async () => {
+    const chain = new FakeChain();
+    chain.strictKeys = true;
+    const realKey = throwawayKey();
+    const sender = `bob.${PARENT}`;
+    chain.accounts.set(sender, realKey.getPublicKey().toString());
+    const { post } = await start({ chain, limits: { relaySenderMax: 1, relayGlobalMax: 1 } });
+    // A forger names a real player as sender but signs with a key of their own, several times over.
+    for (let i = 0; i < 3; i++) {
+      const r = await post('/relay', { signedDelegate: await delegateBase64({ sender }) });
+      assert.equal(r.status, 403);
+      assert.equal(r.body.error.code, 'bad_signer');
+    }
+    assert.equal(chain.relayed.length, 0);
+    // The forged calls did not use up the sender or the global budget: the real player is still served.
+    const ok = await post('/relay', { signedDelegate: await delegateBase64({ sender, key: realKey }) });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(chain.relayed, [sender]);
+  });
+
+  it('403 bad_signer for a sender account that does not exist', async () => {
+    const chain = new FakeChain();
+    chain.strictKeys = true;
+    const { post } = await start({ chain });
+    const r = await post('/relay', { signedDelegate: await delegateBase64({ sender: `ghost.${PARENT}` }) });
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error.code, 'bad_signer');
+    assert.equal(chain.relayed.length, 0);
+  });
+
+  it('a chain error while checking the signer key is not a 403 and relays nothing', async () => {
+    const chain = new FakeChain();
+    chain.isAccessKey = async () => {
+      throw new ChainError('chain_error', 'rpc down');
+    };
+    const { post } = await start({ chain });
+    const r = await post('/relay', { signedDelegate: await delegateBase64() });
+    assert.ok(r.status >= 500, `status ${r.status}`);
     assert.equal(chain.relayed.length, 0);
   });
 

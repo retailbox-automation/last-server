@@ -171,6 +171,13 @@ export function createApp(opts: AppOptions): Server {
     limit(relayIp, `ip:${ip}`, 'relay');
     const body = await readJson(req);
     const valid = validateSignedDelegate(body.signedDelegate, policy);
+    // The signature only proves the delegate matches the key written inside it. Without this check anyone could
+    // name a real player as sender, sign with a key of their own, and spend the sender and global budgets and the
+    // studio's gas (the studio pays for failed calls too). The key must be an access key of the sender account.
+    const signerKey = valid.signedDelegate.delegateAction.publicKey.toString();
+    if (!(await chain.isAccessKey(valid.senderId, signerKey))) {
+      throw new HttpError(403, 'bad_signer', 'the delegate is not signed by a key of the sender account');
+    }
     limit(relaySender, valid.senderId, 'relay');
     checkDelegateWindow(valid.maxBlockHeight, await blockHeight());
     // The studio pays the gas of every relayed call, failed ones included: stop at the balance floor,

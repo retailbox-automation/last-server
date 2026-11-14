@@ -56,6 +56,8 @@ export class ChainError extends Error {
 
 export interface Chain {
   accountStatus(accountId: string, publicKey: string): Promise<AccountStatus>;
+  /** True only when `publicKey` is an access key of the existing account `accountId`. */
+  isAccessKey(accountId: string, publicKey: string): Promise<boolean>;
   createPlayer(accountId: string, publicKey: string): Promise<{ txHash: string }>;
   relay(signedDelegate: SignedDelegate, worldContractId: string): Promise<RelayResult>;
   /** Latest (optimistic) block height. */
@@ -160,6 +162,10 @@ export class NearChain implements Chain {
       if (e instanceof AccessKeyDoesNotExistError) return 'other_key';
       throw new ChainError('chain_error', `access key lookup failed: ${String((e as Error).message ?? e)}`);
     }
+  }
+
+  async isAccessKey(accountId: string, publicKey: string): Promise<boolean> {
+    return (await this.accountStatus(accountId, publicKey)) === 'has_key';
   }
 
   async createPlayer(accountId: string, publicKey: string): Promise<{ txHash: string }> {

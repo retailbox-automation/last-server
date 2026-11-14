@@ -107,6 +107,14 @@ describe('NearChain.accountStatus (testnet RPC answers)', () => {
     assert.equal(await chain.accountStatus(`mara.${PARENT}`, throwawayKey().getPublicKey().toString()), 'other_key');
   });
 
+  it('isAccessKey is true only for the key the account holds; another key and a missing account are false', async () => {
+    const mine = throwawayKey().getPublicKey().toString();
+    accounts.set(`rhea.${PARENT}`, mine);
+    assert.equal(await chain.isAccessKey(`rhea.${PARENT}`, mine), true);
+    assert.equal(await chain.isAccessKey(`rhea.${PARENT}`, throwawayKey().getPublicKey().toString()), false);
+    assert.equal(await chain.isAccessKey(`nobody-y4m1.${PARENT}`, mine), false);
+  });
+
   it('reads at optimistic finality, so an account created a moment ago is already visible', async () => {
     seen.length = 0;
     await chain.accountStatus(`nobody-2.${PARENT}`, throwawayKey().getPublicKey().toString());
