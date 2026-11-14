@@ -77,6 +77,7 @@ async function start(over: { limits?: Partial<Limits>; trustProxyHops?: number; 
     policy: policy({ limits: { ...DEFAULT_LIMITS, ...over.limits }, trustProxyHops: over.trustProxyHops ?? 0 }),
     chain,
     now: () => t,
+    sleep: async () => {},
     log: (line) => logs.push(line),
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -389,6 +390,26 @@ describe('POST /relay', () => {
     const ok = await post('/relay', { signedDelegate: await delegateBase64({ sender, key: realKey }) });
     assert.equal(ok.status, 200);
     assert.deepEqual(chain.relayed, [sender]);
+  });
+
+  it('a key that becomes visible on the second look (a brand-new player on a lagging node) is relayed, not refused', async () => {
+    const chain = new FakeChain();
+    let looks = 0;
+    chain.isAccessKey = async () => ++looks >= 2;
+    const { post } = await start({ chain });
+    const r = await post('/relay', { signedDelegate: await delegateBase64() });
+    assert.equal(r.status, 200);
+    assert.equal(looks, 2);
+    assert.equal(chain.relayed.length, 1);
+  });
+
+  it('a forged key is looked up exactly twice, then 403', async () => {
+    const chain = new FakeChain();
+    chain.strictKeys = true;
+    const { post } = await start({ chain });
+    const r = await post('/relay', { signedDelegate: await delegateBase64() });
+    assert.equal(r.status, 403);
+    assert.equal(chain.keyChecks, 2);
   });
 
   it('403 bad_signer for a sender account that does not exist', async () => {

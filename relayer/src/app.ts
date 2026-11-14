@@ -21,7 +21,12 @@ export interface AppOptions {
   /** One JSON line per event; defaults to stdout. */
   log?: (line: Record<string, unknown>) => void;
   now?: () => number;
+  /** Pause used between the two signer-key checks; tests pass an instant one. */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+/** A brand-new player's key may not be visible to our RPC node yet: a failed key check is repeated once after this. */
+export const SIGNER_RECHECK_MS = 1_000;
 
 class HttpError extends Error {
   readonly status: number;
@@ -71,6 +76,7 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 export function createApp(opts: AppOptions): Server {
   const { policy, chain } = opts;
   const now = opts.now ?? Date.now;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const log = opts.log ?? ((line) => console.log(JSON.stringify(line)));
   const l = policy.limits;
   const relayIp = new RateLimiter(l.relayIpMax, l.relayIpWindowS, now);
@@ -175,8 +181,13 @@ export function createApp(opts: AppOptions): Server {
     // name a real player as sender, sign with a key of their own, and spend the sender and global budgets and the
     // studio's gas (the studio pays for failed calls too). The key must be an access key of the sender account.
     const signerKey = valid.signedDelegate.delegateAction.publicKey.toString();
+    // The web client does not retry a 403 through the player's own account, so a key that is only a second late
+    // must not be refused: look again once before saying no.
     if (!(await chain.isAccessKey(valid.senderId, signerKey))) {
-      throw new HttpError(403, 'bad_signer', 'the delegate is not signed by a key of the sender account');
+      await sleep(SIGNER_RECHECK_MS);
+      if (!(await chain.isAccessKey(valid.senderId, signerKey))) {
+        throw new HttpError(403, 'bad_signer', 'the delegate is not signed by a key of the sender account');
+      }
     }
     limit(relaySender, valid.senderId, 'relay');
     checkDelegateWindow(valid.maxBlockHeight, await blockHeight());
